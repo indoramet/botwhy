@@ -70,10 +70,10 @@ const client = new Client({
             '--no-first-run',
             '--no-zygote',
             '--disable-gpu',
-            '--disable-software-rasterizer'
+            '--disable-software-rasterizer',
+            '--disable-extensions'
         ],
         headless: true,
-        executablePath: '/usr/bin/google-chrome',
         timeout: 100000
     }
 });
