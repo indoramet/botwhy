@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Bot Praktikum - QR Scanner</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #f0f2f5;
+            padding: 2rem;
+        }
+        .container {
+            text-align: center;
+            background: white;
+            padding: 2rem;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 800px;
+            margin-bottom: 2rem;
+        }
+        h1, h2 {
+            color: #128C7E;
+            margin-bottom: 1rem;
+        }
+        #qrcode {
+            margin: 2rem 0;
+        }
+        #status {
+            margin: 1rem 0;
+            padding: 0.5rem;
+            border-radius: 5px;
+        }
+        .connected {
+            background-color: #25D366;
+            color: white;
+        }
+        .waiting {
+            background-color: #FFA500;
+            color: white;
+        }
+        .message-log {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 1rem;
+            margin: 1rem 0;
+            text-align: left;
+            border-radius: 5px;
+        }
+        .message-item {
+            margin-bottom: 0.5rem;
+            padding: 0.5rem;
+            background: #f8f9fa;
+            border-radius: 5px;
+        }
+        .message-time {
+            color: #666;
+            font-size: 0.8rem;
+        }
+        .broadcast-form {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+        .broadcast-form textarea {
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            resize: vertical;
+            min-height: 100px;
+        }
+        .broadcast-form input[type="text"] {
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        button {
+            background-color: #128C7E;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #075E54;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .tabs {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+        .tab {
+            padding: 0.5rem 1rem;
+            cursor: pointer;
+            border-radius: 5px;
+            background: #f0f2f5;
+        }
+        .tab.active {
+            background: #128C7E;
+            color: white;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WhatsApp Bot Praktikum</h1>
+        <div id="qrcode"></div>
+        <div id="status" class="waiting">Menunggu QR Code...</div>
+    </div>
+
+    <div class="container" id="mainContent" style="display: none;">
+        <div class="tabs">
+            <div class="tab active" data-tab="messages">Log Pesan</div>
+            <div class="tab" data-tab="broadcast">Broadcast</div>
+        </div>
+
+        <div class="tab-content active" id="messages">
+            <h2>Log Pesan</h2>
+            <div class="message-log" id="messageLog">
+                <!-- Pesan akan ditampilkan di sini -->
+            </div>
+        </div>
+
+        <div class="tab-content" id="broadcast">
+            <h2>Broadcast Pesan</h2>
+            <form class="broadcast-form" id="broadcastForm">
+                <input type="text" id="targetNumber" placeholder="Nomor tujuan (contoh: 628123456789)" required>
+                <textarea id="broadcastMessage" placeholder="Ketik pesan broadcast di sini..." required></textarea>
+                <button type="submit" id="sendButton">Kirim Broadcast</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const qrcodeDiv = document.getElementById('qrcode');
+        const statusDiv = document.getElementById('status');
+        const mainContent = document.getElementById('mainContent');
+        const messageLog = document.getElementById('messageLog');
+        const broadcastForm = document.getElementById('broadcastForm');
+        
+        // Tab handling
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                
+                tab.classList.add('active');
+                document.getElementById(tab.dataset.tab).classList.add('active');
+            });
+        });
+
+        socket.on('qr', (qr) => {
+            qrcodeDiv.innerHTML = qr;
+            statusDiv.textContent = 'Silakan scan QR Code dengan WhatsApp Anda';
+            statusDiv.className = 'waiting';
+            mainContent.style.display = 'none';
+        });
+
+        socket.on('ready', () => {
+            qrcodeDiv.innerHTML = '<h2>✅ WhatsApp Bot Terhubung!</h2>';
+            statusDiv.textContent = 'Bot siap digunakan';
+            statusDiv.className = 'connected';
+            mainContent.style.display = 'block';
+        });
+
+        socket.on('authenticated', () => {
+            qrcodeDiv.innerHTML = '<h2>✅ Autentikasi Berhasil!</h2>';
+            statusDiv.textContent = 'Menghubungkan...';
+            statusDiv.className = 'waiting';
+        });
+
+        // Menangani pesan masuk
+        socket.on('message', (message) => {
+            const messageItem = document.createElement('div');
+            messageItem.className = 'message-item';
+            messageItem.innerHTML = `
+                <div class="message-time">${message.time}</div>
+                <div class="message-from">Dari: ${message.from}</div>
+                <div class="message-body">${message.body}</div>
+            `;
+            messageLog.insertBefore(messageItem, messageLog.firstChild);
+        });
+
+        // Menangani form broadcast
+        broadcastForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const targetNumber = document.getElementById('targetNumber').value;
+            const message = document.getElementById('broadcastMessage').value;
+            
+            socket.emit('broadcast', { target: targetNumber, message });
+            
+            // Reset form
+            document.getElementById('broadcastMessage').value = '';
+            document.getElementById('targetNumber').value = '';
+        });
+
+        // Menangani status broadcast
+        socket.on('broadcastStatus', (status) => {
+            alert(status.message);
+        });
+    </script>
+</body>
+</html> 
