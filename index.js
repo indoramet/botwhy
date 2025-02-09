@@ -62,15 +62,17 @@ setInterval(processMessageQueue, DELAY_BETWEEN_MESSAGES);
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
-        args: ['--no-sandbox'],
-        // Tambahan pengaturan untuk menghindari deteksi
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--disable-gpu'
+        ],
         headless: true,
-        userDataDir: './user_data'
-    },
-    // Tambahan pengaturan untuk mensimulasikan perilaku manusia
-    restartOnAuthFail: true,
-    takeoverOnConflict: false,
-    qrMaxRetries: 3
+    }
 });
 
 // Menyimpan socket yang aktif
