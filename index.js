@@ -167,10 +167,19 @@ client.on('message', async msg => {
         else if (command === '!laporan' || command === 'bagaimana cara upload laporan?') {
             await msg.reply('Untuk mengupload laporan:\n1. Login ke sistem\n2. Pilih menu "Upload Laporan"\n3. Pilih praktikum\n4. Upload file laporan Anda');
         }
+        else if (command === '!who made you' || command === 'siapa yang membuat kamu?') {
+            await msg.reply('I have been made by @unlovdman atas izin allah\nSaya dibuat oleh @unlovdman atas izin allah');
+        }
+        else if (command === '!contact' || command === 'gimana saya mengontak anda?') {
+            await msg.reply('you can visit my portofolio web app https://unlovdman.vercel.app/ for more information');
+        }
+
+
         else if (command === '!help' || command === '!bantuan') {
             await msg.reply(`Daftar perintah yang tersedia:
 !jadwal - Informasi jadwal praktikum
 !laporan - Cara upload laporan
+!who made you
 !bantuan - Menampilkan bantuan ini`);
         }
     }, Math.random() * 1000 + 1000); // Random delay 1-2 detik
