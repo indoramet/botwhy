@@ -161,26 +161,73 @@ client.on('message', async msg => {
 
     // Handle pertanyaan umum dengan delay
     setTimeout(async () => {
-        if (command === '!jadwal' || command === 'kapan praktikum?') {
-            await msg.reply('Jadwal praktikum akan diumumkan melalui grup. Silakan cek pengumuman terakhir atau hubungi asisten lab.');
-        }
-        else if (command === '!laporan' || command === 'bagaimana cara upload laporan?') {
-            await msg.reply('Untuk mengupload laporan:\n1. Login ke sistem\n2. Pilih menu "Upload Laporan"\n3. Pilih praktikum\n4. Upload file laporan Anda');
-        }
-        else if (command === '!who made you' || command === 'siapa yang membuat kamu?') {
-            await msg.reply('I have been made by @unlovdman atas izin allah\nSaya dibuat oleh @unlovdman atas izin allah');
-        }
-        else if (command === '!contact' || command === 'gimana saya mengontak anda?') {
-            await msg.reply('you can visit my portofolio web app https://unlovdman.vercel.app/ for more information');
-        }
+        try {
+            // Cek apakah pesan dari grup
+            const chat = await msg.getChat();
+            
+            // Hanya respons jika mention bot atau pesan pribadi
+            if (!chat.isGroup || (chat.isGroup && msg.mentionedIds.includes(client.info.wid._serialized))) {
+                if (command === '!jadwal' || command === 'kapan praktikum?') {
+                    await msg.reply('Jadwal praktikum akan diumumkan melalui web. Silakan cek pengumuman terakhir atau hubungi asisten lab.');
+                }
+                else if (command === '!nilai' || command === 'nilai praktikum?') {
+                    await msg.reply('Nilai praktikum akan diumumkan melalui web. Silakan cek pengumuman terakhir atau hubungi asisten lab.');
+                }
+                else if (command === '!sesi' || command === 'sesi praktikum?') {
+                    await msg.reply('Praktikum sesi satu : 10:00 - 12:00\nPraktikum sesi dua : 13:00 - 15:00');
+                }
 
 
-        else if (command === '!help' || command === '!bantuan') {
-            await msg.reply(`Daftar perintah yang tersedia:
+
+
+                else if (command === '!laporan' || command === 'bagaimana cara upload laporan?') {
+                    await msg.reply('Untuk mengupload laporan:\n1. ubah file word laporan menjadi pdf\n2. cek link upload laporan sesuai dengan pertemuan ke berapa command contoh !laporan1\n3. klik link upload laporan\n4. upload laporan\n5. Tunggu sampai kelar\nJANGAN SAMPAI MENGUMPULKAN LAPORAN TERLAMBAT -5%!!!');
+                }
+
+                else if (command === '!laporan1' || command === 'mana link upload laporan praktikum pertemuan pertama?') {
+                    await msg.reply('https://s.id/laporan1');
+                }
+                else if (command === '!laporan2' || command === 'mana link upload laporan praktikum pertemuan kedua?') {
+                    await msg.reply('praktikum pertemuan kedua belum diadakan');
+                }
+                else if (command === '!laporan3' || command === 'mana link upload laporan praktikum pertemuan ketiga?') {
+                    await msg.reply('praktikum pertemuan ketiga belum diadakan');
+                }
+                else if (command === '!laporan4' || command === 'mana link upload laporan praktikum pertemuan keempat?') {
+                    await msg.reply('praktikum pertemuan keempat belum diadakan');
+                }
+                else if (command === '!laporan5' || command === 'mana link upload laporan praktikum pertemuan kelima?') {
+                    await msg.reply('praktikum pertemuan kelima belum diadakan');
+                }
+                else if (command === '!laporan6' || command === 'mana link upload laporan praktikum pertemuan keenam?') {
+                    await msg.reply('praktikum pertemuan keenam belum diadakan');
+                }
+                else if (command === '!laporan7' || command === 'mana link upload laporan praktikum pertemuan ketujuh?') {
+                    await msg.reply('praktikum pertemuan ketujuh belum diadakan');
+                }
+
+
+
+                else if (command === '!who made you' || command === 'siapa yang membuat kamu?') {
+                    await msg.reply('I have been made by @unlovdman atas izin allah\nSaya dibuat oleh @unlovdman atas izin allah');
+                }
+                else if (command === '!contact' || command === 'gimana saya mengontak anda?') {
+                    await msg.reply('you can visit my portofolio web app https://unlovdman.vercel.app/ for more information');
+                }
+                else if (command === '!help' || command === '!bantuan') {
+                    await msg.reply(`Daftar perintah yang tersedia:
 !jadwal - Informasi jadwal praktikum
 !laporan - Cara upload laporan
-!who made you
+!who made you - Info pembuat bot
+!contact - Info kontak
 !bantuan - Menampilkan bantuan ini`);
+                }
+            } else if (chat.isGroup && command.startsWith('!')) {
+                // Jika di grup tapi tidak di-mention, beri tahu cara menggunakan bot
+                await msg.reply('Untuk menggunakan bot di grup, mohon mention bot terlebih dahulu.\nContoh: @bot !help');
+            }
+        } catch (error) {
+            console.error('Error handling message:', error);
         }
     }, Math.random() * 1000 + 1000); // Random delay 1-2 detik
 });
