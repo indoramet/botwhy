@@ -186,6 +186,11 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.status(200).send('OK');
+});
+
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
 

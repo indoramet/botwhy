@@ -1,4 +1,4 @@
-run = "npm start"
+run = "pm2 start index.js --name ezbotwa && pm2 save && pm2 logs"
 entrypoint = "index.js"
 
 [nix]
@@ -7,9 +7,8 @@ channel = "stable-22_11"
 [env]
 PATH = "/home/runner/$REPL_SLUG/.config/npm/node_global/bin:/home/runner/$REPL_SLUG/node_modules/.bin"
 npm_config_prefix = "/home/runner/$REPL_SLUG/.config/npm/node_global"
-PUPPETEER_EXECUTABLE_PATH = "/nix/store/chrome-linux/chrome"
-XDG_RUNTIME_DIR = "/tmp/runtime-runner"
-DISPLAY = ":99.0"
+PUPPETEER_EXECUTABLE_PATH = "/usr/bin/chromium"
+PM2_HOME = "/home/runner/$REPL_SLUG/.pm2"
 
 [packager]
 language = "nodejs"
@@ -26,5 +25,5 @@ syntax = "javascript"
 start = [ "typescript-language-server", "--stdio" ]
 
 [deployment]
-run = ["sh", "-c", "npm start"]
+run = ["sh", "-c", "pm2 start index.js --name ezbotwa && pm2 save && pm2 logs"]
 deploymentTarget = "cloudrun" 
