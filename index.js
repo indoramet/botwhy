@@ -376,7 +376,7 @@ setInterval(processMessageQueue, DELAY_BETWEEN_MESSAGES);
 const client = new Client({
     authStrategy: new LocalAuth({
         clientId: 'bot-whatsapp',
-        dataPath: './sessions'
+        dataPath: '/app/sessions'
     }),
     puppeteer: {
         headless: true,
@@ -390,33 +390,35 @@ const client = new Client({
             '--disable-extensions',
             '--disable-web-security',
             '--disable-features=site-per-process,IsolateOrigins',
-            '--window-size=1920,1080',
+            '--window-size=1024,768',
             '--single-process',
             '--no-zygote',
-            '--no-first-run',
             '--disable-features=AudioServiceOutOfProcess',
             '--disable-features=IsolateOrigins,site-per-process',
             '--disable-software-rasterizer',
             '--ignore-certificate-errors',
             '--ignore-certificate-errors-spki-list',
             '--disable-infobars',
-            '--disable-notifications'
+            '--disable-notifications',
+            '--use-gl=disabled'
         ],
         defaultViewport: {
-            width: 1920,
-            height: 1080
+            width: 1024,
+            height: 768,
+            deviceScaleFactor: 1
         },
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+        executablePath: '/usr/bin/chromium',
         browserWSEndpoint: null,
         ignoreHTTPSErrors: true,
-        timeout: 120000
+        timeout: 0
     },
     restartOnAuthFail: true,
     qrMaxRetries: 5,
-    authTimeoutMs: 120000,
-    qrTimeoutMs: 60000,
+    authTimeoutMs: 0,
+    qrTimeoutMs: 0,
     takeoverOnConflict: true,
-    takeoverTimeoutMs: 120000
+    takeoverTimeoutMs: 0,
+    bypassCSP: true
 });
     
 let isClientReady = false;
@@ -427,6 +429,19 @@ async function initializeClient() {
     try {
         console.log('Initializing WhatsApp client...');
         await client.initialize();
+        
+        // Add a timeout to restart if stuck in connecting state
+        setTimeout(async () => {
+            if (!isClientReady) {
+                console.log('Client stuck in connecting state, attempting restart...');
+                try {
+                    await client.destroy();
+                } catch (error) {
+                    console.error('Error destroying stuck client:', error);
+                }
+                process.exit(1); // Let the container restart
+            }
+        }, 30000); // 30 seconds timeout
     } catch (error) {
         console.error('Failed to initialize client:', error);
         handleReconnect();
@@ -436,7 +451,7 @@ async function initializeClient() {
 async function handleReconnect() {
     if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
         console.error('Max reconnection attempts reached. Restarting process...');
-        process.exit(1); // Let the container restart
+        process.exit(1);
         return;
     }
 
@@ -449,6 +464,14 @@ async function handleReconnect() {
         console.error('Error destroying client:', error);
     }
 
+    // Clear the sessions directory
+    try {
+        await fs.rm(path.join(__dirname, 'sessions'), { recursive: true, force: true });
+        await fs.mkdir(path.join(__dirname, 'sessions'));
+    } catch (error) {
+        console.error('Error clearing sessions:', error);
+    }
+
     // Wait before trying to reconnect
     const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
     await new Promise(resolve => setTimeout(resolve, delay));
@@ -459,7 +482,7 @@ async function handleReconnect() {
 client.on('ready', async () => {
     console.log('Client is ready!');
     isClientReady = true;
-    reconnectAttempts = 0; // Reset reconnect attempts on successful connection
+    reconnectAttempts = 0;
     try {
         const chats = await client.getChats();
         console.log(`Loaded ${chats.length} chats`);
