@@ -490,8 +490,15 @@ client.on('qr', async (qr) => {
 
 client.on('ready', async () => {
     console.log('Client is ready!');
-    await loadSchedules();  // Load saved schedules
-    io.emit('ready');
+    try {
+        const chats = await client.getChats();
+        console.log(`Loaded ${chats.length} chats`);
+        await loadSchedules();
+        console.log('Loaded scheduled messages');
+        io.emit('ready');
+    } catch (error) {
+        console.error('Error in ready event:', error);
+    }
 });
 
 client.on('authenticated', () => {
@@ -502,29 +509,41 @@ client.on('authenticated', () => {
 const lastUserMessage = new Map();
 
 client.on('message', async msg => {
-    const now = Date.now();
-    const lastTime = lastUserMessage.get(msg.from) || 0;
-    
-    if (now - lastTime < 2000) {
-        console.log('Rate limiting response to:', msg.from);
-        return;
-    }
-
-    lastUserMessage.set(msg.from, now);
-
-    if (activeSocket) {
-        activeSocket.emit('message', {
+    try {
+        console.log('Received message:', {
             from: msg.from,
             body: msg.body,
-            time: moment().format('HH:mm:ss')
+            isGroup: msg._data.isGroup
         });
-    }
 
-    const command = msg.body.toLowerCase();
+        const now = Date.now();
+        const lastTime = lastUserMessage.get(msg.from) || 0;
+        
+        if (now - lastTime < 2000) {
+            console.log('Rate limiting response to:', msg.from);
+            return;
+        }
 
-    setTimeout(async () => {
+        lastUserMessage.set(msg.from, now);
+
+        if (activeSocket) {
+            activeSocket.emit('message', {
+                from: msg.from,
+                body: msg.body,
+                time: moment().format('HH:mm:ss')
+            });
+        }
+
+        const command = msg.body.toLowerCase();
+        console.log('Processing command:', command);
+
         try {
             const chat = await msg.getChat();
+            console.log('Chat info:', {
+                isGroup: chat.isGroup,
+                name: chat.name,
+                isMuted: chat.isMuted
+            });
             
             // Check if chat is muted
             if (chat.isMuted) {
@@ -534,26 +553,34 @@ client.on('message', async msg => {
             
             // Check for admin commands first
             if (await handleAdminCommand(msg)) {
+                console.log('Admin command handled');
                 return;
             }
             
             if (!chat.isGroup || (chat.isGroup && msg.mentionedIds.includes(client.info.wid._serialized))) {
+                console.log('Processing command in chat:', command);
+                
                 if (command === '!izin') {
+                    console.log('Processing !izin command');
                     try {
                         await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
+                        console.log('Sent initial !izin response');
                         
                         const stickerPath = path.join(__dirname, 'public', 'assets', 'stickers', 'izin.jpeg');
+                        console.log('Sticker path:', stickerPath);
                         
                         // Check if sticker directory exists, if not create it
                         const stickerDir = path.join(__dirname, 'public', 'assets', 'stickers');
                         try {
                             await fs.access(stickerDir);
                         } catch (error) {
+                            console.log('Creating sticker directory');
                             await fs.mkdir(stickerDir, { recursive: true });
                         }
                         
                         try {
                             await sendStickerFromFile(msg, stickerPath);
+                            console.log('Sticker sent successfully');
                         } catch (stickerError) {
                             console.error('Failed to send sticker:', stickerError);
                             await msg.reply('Maaf, terjadi kesalahan saat mengirim sticker. Pesan izin tetap tercatat.');
@@ -631,23 +658,28 @@ client.on('message', async msg => {
 `);
                 }
             } else if (chat.isGroup && command.startsWith('!')) {
+                console.log('Group message without mention, sending hint');
                 await msg.reply('Untuk menggunakan bot di grup, mohon mention bot terlebih dahulu.\nContoh: @bot !help');
             }
         } catch (error) {
             console.error('Error handling message:', error);
         }
-    }, Math.random() * 1000 + 1000); 
+    } catch (error) {
+        console.error('Critical error in message handler:', error);
+    }
 });
 
 client.on('auth_failure', async (msg) => {
     console.error('Authentication failure:', msg);
-    // Clear auth data and reinitialize
-    try {
-        await client.destroy();
-        await client.initialize();
-    } catch (error) {
-        console.error('Failed to reinitialize after auth failure:', error);
-    }
+    io.emit('auth_failure', 'Authentication failed');
+});
+
+client.on('change_state', state => {
+    console.log('Client state changed to:', state);
+});
+
+client.on('loading_screen', (percent, message) => {
+    console.log('Loading screen:', percent, message);
 });
 
 // Handle unexpected errors
@@ -674,4 +706,8 @@ server.listen(PORT, HOST, () => {
     console.log(`Server running on http://${HOST}:${PORT}`);
 });
 
-client.initialize(); 
+// Initialize the client
+console.log('Initializing WhatsApp client...');
+client.initialize().catch(err => {
+    console.error('Failed to initialize client:', err);
+}); 
