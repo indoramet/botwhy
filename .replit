@@ -8,6 +8,8 @@ channel = "stable-22_11"
 PATH = "/home/runner/$REPL_SLUG/.config/npm/node_global/bin:/home/runner/$REPL_SLUG/node_modules/.bin"
 npm_config_prefix = "/home/runner/$REPL_SLUG/.config/npm/node_global"
 PUPPETEER_EXECUTABLE_PATH = "/nix/store/chrome-linux/chrome"
+XDG_RUNTIME_DIR = "/tmp/runtime-runner"
+DISPLAY = ":99.0"
 
 [packager]
 language = "nodejs"
@@ -21,4 +23,8 @@ pattern = "**/*.js"
 syntax = "javascript"
 
 [languages.javascript.languageServer]
-start = [ "typescript-language-server", "--stdio" ] 
+start = [ "typescript-language-server", "--stdio" ]
+
+[deployment]
+run = ["sh", "-c", "npm start"]
+deploymentTarget = "cloudrun" 
