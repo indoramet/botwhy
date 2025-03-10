@@ -390,7 +390,7 @@ const client = new Client({
             '--disable-extensions',
             '--disable-web-security',
             '--disable-features=site-per-process,IsolateOrigins',
-            '--window-size=1024,768',
+            '--window-size=800,600',
             '--single-process',
             '--no-zygote',
             '--disable-features=AudioServiceOutOfProcess',
@@ -400,17 +400,29 @@ const client = new Client({
             '--ignore-certificate-errors-spki-list',
             '--disable-infobars',
             '--disable-notifications',
-            '--use-gl=disabled'
+            '--use-gl=disabled',
+            '--disable-setuid-sandbox',
+            '--no-zygote',
+            '--deterministic-fetch',
+            '--disable-features=IsolateOrigins',
+            '--disable-features=site-per-process'
         ],
         defaultViewport: {
-            width: 1024,
-            height: 768,
-            deviceScaleFactor: 1
+            width: 800,
+            height: 600,
+            deviceScaleFactor: 1,
+            hasTouch: false,
+            isLandscape: true,
+            isMobile: false
         },
         executablePath: '/usr/bin/chromium',
         browserWSEndpoint: null,
         ignoreHTTPSErrors: true,
         timeout: 0
+    },
+    webVersionCache: {
+        type: 'remote',
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2408.52.html'
     },
     restartOnAuthFail: true,
     qrMaxRetries: 5,
@@ -427,7 +439,18 @@ const MAX_RECONNECT_ATTEMPTS = 5;
 
 async function initializeClient() {
     try {
-        console.log('Initializing WhatsApp client...');
+        console.log('Starting WhatsApp client initialization...');
+        
+        // Ensure sessions directory exists
+        const sessionsPath = '/app/sessions';
+        try {
+            await fs.access(sessionsPath);
+        } catch (error) {
+            console.log('Creating sessions directory...');
+            await fs.mkdir(sessionsPath, { recursive: true });
+        }
+        
+        console.log('Initializing client...');
         await client.initialize();
         
         // Add a timeout to restart if stuck in connecting state
@@ -436,12 +459,14 @@ async function initializeClient() {
                 console.log('Client stuck in connecting state, attempting restart...');
                 try {
                     await client.destroy();
+                    console.log('Client destroyed successfully');
                 } catch (error) {
                     console.error('Error destroying stuck client:', error);
                 }
+                console.log('Exiting process for container restart...');
                 process.exit(1); // Let the container restart
             }
-        }, 30000); // 30 seconds timeout
+        }, 60000); // 60 seconds timeout
     } catch (error) {
         console.error('Failed to initialize client:', error);
         handleReconnect();
@@ -459,23 +484,29 @@ async function handleReconnect() {
     console.log(`Reconnection attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`);
     
     try {
+        console.log('Destroying existing client...');
         await client.destroy();
+        console.log('Client destroyed successfully');
     } catch (error) {
         console.error('Error destroying client:', error);
     }
 
     // Clear the sessions directory
     try {
-        await fs.rm(path.join(__dirname, 'sessions'), { recursive: true, force: true });
-        await fs.mkdir(path.join(__dirname, 'sessions'));
+        console.log('Clearing sessions directory...');
+        await fs.rm('/app/sessions', { recursive: true, force: true });
+        await fs.mkdir('/app/sessions', { recursive: true });
+        console.log('Sessions directory cleared and recreated');
     } catch (error) {
         console.error('Error clearing sessions:', error);
     }
 
     // Wait before trying to reconnect
     const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+    console.log(`Waiting ${delay}ms before reconnecting...`);
     await new Promise(resolve => setTimeout(resolve, delay));
     
+    console.log('Attempting to reinitialize client...');
     await initializeClient();
 }
 
