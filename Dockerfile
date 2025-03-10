@@ -40,6 +40,7 @@ RUN apt-get update && apt-get install -y \
     lsb-release \
     wget \
     xdg-utils \
+    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -61,9 +62,14 @@ COPY . .
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV NODE_TLS_REJECT_UNAUTHORIZED=0
+ENV DISPLAY=:99
+
+# Create a wrapper script to start Xvfb and the application
+RUN echo '#!/bin/bash\nXvfb :99 -screen 0 1024x768x16 &\nnpm start' > /app/start.sh && \
+    chmod +x /app/start.sh
 
 # Expose port
 EXPOSE 3000
 
-# Start the application
-CMD ["npm", "start"] 
+# Start the application using the wrapper script
+CMD ["/app/start.sh"] 

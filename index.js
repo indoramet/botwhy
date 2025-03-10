@@ -392,36 +392,92 @@ const client = new Client({
             '--disable-features=site-per-process,IsolateOrigins',
             '--window-size=1920,1080',
             '--single-process',
+            '--no-zygote',
+            '--no-first-run',
             '--disable-features=AudioServiceOutOfProcess',
-            '--disable-features=IsolateOrigins,site-per-process'
+            '--disable-features=IsolateOrigins,site-per-process',
+            '--disable-software-rasterizer',
+            '--ignore-certificate-errors',
+            '--ignore-certificate-errors-spki-list',
+            '--disable-infobars',
+            '--disable-notifications'
         ],
         defaultViewport: {
             width: 1920,
             height: 1080
         },
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
         browserWSEndpoint: null,
         ignoreHTTPSErrors: true,
-        timeout: 60000
+        timeout: 120000
     },
     restartOnAuthFail: true,
     qrMaxRetries: 5,
-    authTimeoutMs: 60000,
-    qrTimeoutMs: 40000
+    authTimeoutMs: 120000,
+    qrTimeoutMs: 60000,
+    takeoverOnConflict: true,
+    takeoverTimeoutMs: 120000
 });
     
-client.on('disconnected', async (reason) => {
-    console.log('Client was disconnected:', reason);
+let isClientReady = false;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 5;
+
+async function initializeClient() {
     try {
-        console.log('Attempting to reconnect...');
-        // Wait a bit before trying to reconnect
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        console.log('Initializing WhatsApp client...');
         await client.initialize();
     } catch (error) {
-        console.error('Failed to reconnect:', error);
-        // Wait longer before trying again
-        await new Promise(resolve => setTimeout(resolve, 15000));
-        process.exit(1); // Let the container restart
+        console.error('Failed to initialize client:', error);
+        handleReconnect();
     }
+}
+
+async function handleReconnect() {
+    if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        console.error('Max reconnection attempts reached. Restarting process...');
+        process.exit(1); // Let the container restart
+        return;
+    }
+
+    reconnectAttempts++;
+    console.log(`Reconnection attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`);
+    
+    try {
+        await client.destroy();
+    } catch (error) {
+        console.error('Error destroying client:', error);
+    }
+
+    // Wait before trying to reconnect
+    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+    await new Promise(resolve => setTimeout(resolve, delay));
+    
+    await initializeClient();
+}
+
+client.on('ready', async () => {
+    console.log('Client is ready!');
+    isClientReady = true;
+    reconnectAttempts = 0; // Reset reconnect attempts on successful connection
+    try {
+        const chats = await client.getChats();
+        console.log(`Loaded ${chats.length} chats`);
+        await loadSchedules();
+        console.log('Loaded scheduled messages');
+        io.emit('ready');
+    } catch (error) {
+        console.error('Error in ready event:', error);
+        if (!isClientReady) {
+            handleReconnect();
+        }
+    }
+});
+
+client.on('disconnected', async (reason) => {
+    console.log('Client was disconnected:', reason);
+    isClientReady = false;
+    handleReconnect();
 });
 
 process.on('SIGINT', async () => {
@@ -485,19 +541,6 @@ client.on('qr', async (qr) => {
         io.emit('qr', `<img src="${qrImage}" alt="QR Code" />`);
     } catch (err) {
         console.error('Error generating QR code:', err);
-    }
-});
-
-client.on('ready', async () => {
-    console.log('Client is ready!');
-    try {
-        const chats = await client.getChats();
-        console.log(`Loaded ${chats.length} chats`);
-        await loadSchedules();
-        console.log('Loaded scheduled messages');
-        io.emit('ready');
-    } catch (error) {
-        console.error('Error in ready event:', error);
     }
 });
 
@@ -707,7 +750,4 @@ server.listen(PORT, HOST, () => {
 });
 
 // Initialize the client
-console.log('Initializing WhatsApp client...');
-client.initialize().catch(err => {
-    console.error('Failed to initialize client:', err);
-}); 
+initializeClient(); 
