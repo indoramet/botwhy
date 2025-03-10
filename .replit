@@ -1,4 +1,4 @@
-run = "pm2 start index.js --name ezbotwa && pm2 save && pm2 logs"
+run = "npm i && node index.js"
 entrypoint = "index.js"
 
 [nix]
@@ -6,9 +6,7 @@ channel = "stable-22_11"
 
 [env]
 PATH = "/home/runner/$REPL_SLUG/.config/npm/node_global/bin:/home/runner/$REPL_SLUG/node_modules/.bin"
-npm_config_prefix = "/home/runner/$REPL_SLUG/.config/npm/node_global"
 PUPPETEER_EXECUTABLE_PATH = "/usr/bin/chromium"
-PM2_HOME = "/home/runner/$REPL_SLUG/.pm2"
 
 [packager]
 language = "nodejs"

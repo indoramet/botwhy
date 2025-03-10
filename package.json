@@ -16,9 +16,9 @@
     "fluent-ffmpeg": "^2.1.2",
     "moment": "^2.29.4",
     "qrcode": "^1.5.1",
-    "sharp": "^0.32.1",
+    "sharp": "^0.30.7",
     "socket.io": "^4.6.1",
-    "whatsapp-web.js": "^1.23.0"
+    "whatsapp-web.js": "^1.19.4"
   },
   "devDependencies": {
     "nodemon": "^2.0.22"
