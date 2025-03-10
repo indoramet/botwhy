@@ -45,6 +45,9 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
+# Create and set permissions for sessions directory
+RUN mkdir -p /app/sessions && chmod 777 /app/sessions
+
 # Copy package files
 COPY package*.json ./
 
@@ -57,6 +60,7 @@ COPY . .
 # Set Puppeteer environment variables
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV NODE_TLS_REJECT_UNAUTHORIZED=0
 
 # Expose port
 EXPOSE 3000

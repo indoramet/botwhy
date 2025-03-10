@@ -253,7 +253,10 @@ const client = new Client({
             '--disable-extensions',
             '--disable-web-security',
             '--disable-features=site-per-process,IsolateOrigins',
-            '--window-size=1920,1080'
+            '--window-size=1920,1080',
+            '--single-process',
+            '--disable-features=AudioServiceOutOfProcess',
+            '--disable-features=IsolateOrigins,site-per-process'
         ],
         defaultViewport: {
             width: 1920,
@@ -271,13 +274,16 @@ const client = new Client({
     
 client.on('disconnected', async (reason) => {
     console.log('Client was disconnected:', reason);
-    // Try to reconnect
     try {
         console.log('Attempting to reconnect...');
-        await client.destroy();
+        // Wait a bit before trying to reconnect
+        await new Promise(resolve => setTimeout(resolve, 5000));
         await client.initialize();
     } catch (error) {
         console.error('Failed to reconnect:', error);
+        // Wait longer before trying again
+        await new Promise(resolve => setTimeout(resolve, 15000));
+        process.exit(1); // Let the container restart
     }
 });
 
