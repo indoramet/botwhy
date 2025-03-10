@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "glitch": "npm install && npm start"
+    "replit": "npm install && npm run dev"
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
@@ -25,6 +25,6 @@
     "nodemon": "^2.0.22"
   },
   "engines": {
-    "node": "16.x"
+    "node": ">=18.0.0"
   }
 }
