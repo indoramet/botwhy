@@ -186,13 +186,19 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-// Health check endpoint
+// Health check endpoints
 app.get('/health', (req, res) => {
     res.status(200).send('OK');
 });
 
 app.get('/uptime', (req, res) => {
-    res.status(200).send('Bot is running');
+    res.status(200).json({
+        status: 'online',
+        timestamp: new Date().toISOString(),
+        whatsapp_connected: client.pupPage ? true : false,
+        memory_usage: process.memoryUsage(),
+        uptime: process.uptime()
+    });
 });
 
 // Serve static files
