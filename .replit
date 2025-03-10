@@ -1,12 +1,14 @@
-run = "npm i && node index.js"
+run = "npm install && node index.js"
 entrypoint = "index.js"
+hidden = [".config", "package-lock.json"]
 
 [nix]
 channel = "stable-22_11"
 
 [env]
+XDG_CONFIG_HOME = "/home/runner/.config"
 PATH = "/home/runner/$REPL_SLUG/.config/npm/node_global/bin:/home/runner/$REPL_SLUG/node_modules/.bin"
-PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
+npm_config_prefix = "/home/runner/$REPL_SLUG/.config/npm/node_global"
 
 [packager]
 language = "nodejs"
@@ -14,10 +16,15 @@ language = "nodejs"
 [packager.features]
 packageSearch = true
 guessImports = true
+enabledForHosting = false
 
+[languages]
 [languages.javascript]
-pattern = "**/*.js"
-syntax = "javascript"
+pattern = "**/{*.js,*.jsx,*.ts,*.tsx}"
 
 [languages.javascript.languageServer]
-start = [ "typescript-language-server", "--stdio" ] 
+start = "typescript-language-server --stdio"
+
+[deployment]
+run = ["sh", "-c", "node index.js"]
+deploymentTarget = "cloudrun" 
