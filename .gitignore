@@ -35,4 +35,11 @@ Thumbs.db
 
 # Additional files
 package-lock.json
-sessions/ 
+sessions/
+
+# Additional files
+.vscode/
+dist/
+coverage/
+.idea/
+*.lock 
