@@ -56,6 +56,90 @@ const ADMIN_NUMBERS = [
     '6287781009836@c.us'  
 ];
 
+// Scheduled messages storage
+const scheduledMessages = new Map();
+
+// After the scheduledMessages Map declaration
+const SCHEDULES_FILE = path.join(__dirname, 'sessions', 'schedules.json');
+
+// Function to save schedules to file
+async function saveSchedules() {
+    const schedulesData = Array.from(scheduledMessages.entries()).map(([id, schedule]) => ({
+        id,
+        groupId: schedule.groupId,
+        dateTime: schedule.dateTime.toISOString(),
+        message: schedule.message
+    }));
+    
+    try {
+        await fs.writeFile(SCHEDULES_FILE, JSON.stringify(schedulesData, null, 2));
+    } catch (error) {
+        console.error('Error saving schedules:', error);
+    }
+}
+
+// Function to load schedules from file
+async function loadSchedules() {
+    try {
+        const exists = await fs.access(SCHEDULES_FILE).then(() => true).catch(() => false);
+        if (!exists) {
+            return;
+        }
+
+        const data = await fs.readFile(SCHEDULES_FILE, 'utf8');
+        const schedulesData = JSON.parse(data);
+        
+        for (const schedule of schedulesData) {
+            const dateTime = new Date(schedule.dateTime);
+            if (dateTime > new Date()) {  // Only schedule future messages
+                await scheduleMessage(schedule.groupId, dateTime, schedule.message);
+            }
+        }
+    } catch (error) {
+        console.error('Error loading schedules:', error);
+    }
+}
+
+// Function to schedule a message
+async function scheduleMessage(groupId, dateTime, message) {
+    const now = new Date();
+    const scheduledTime = new Date(dateTime);
+    
+    if (scheduledTime <= now) {
+        throw new Error('Scheduled time must be in the future');
+    }
+
+    const scheduleId = `${groupId}_${scheduledTime.getTime()}`;
+    const timeoutId = setTimeout(async () => {
+        try {
+            const chat = await client.getChatById(groupId);
+            if (chat && chat.isGroup) {
+                await chat.sendMessage(message);
+                console.log(`Scheduled message sent to ${groupId}`);
+            }
+            scheduledMessages.delete(scheduleId);
+            await saveSchedules();
+        } catch (error) {
+            console.error('Error sending scheduled message:', error);
+        }
+    }, scheduledTime.getTime() - now.getTime());
+
+    scheduledMessages.set(scheduleId, {
+        groupId,
+        dateTime: scheduledTime,
+        message,
+        timeoutId
+    });
+    await saveSchedules();
+    return scheduleId;
+}
+
+// Function to format date for display
+function formatDateTime(date) {
+    return moment(date).format('DD MMMM YYYY HH:mm');
+}
+
+// Extend handleAdminCommand to include scheduling commands
 async function handleAdminCommand(msg) {
     const chat = await msg.getChat();
     const sender = msg.from;
@@ -65,25 +149,78 @@ async function handleAdminCommand(msg) {
     }
 
     const command = msg.body.toLowerCase();
-    
+    const parts = msg.body.split(' ');
 
     if (command.startsWith('!update ')) {
-        const parts = msg.body.split(' ');
-        if (parts.length >= 3) {
-            const commandToUpdate = parts[1].toLowerCase();
-            const newValue = parts.slice(2).join(' ');
-            
-            if (dynamicCommands.hasOwnProperty(commandToUpdate)) {
-                dynamicCommands[commandToUpdate] = newValue;
-                await msg.reply(`✅ Command ${commandToUpdate} has been updated to: ${newValue}`);
-                return true;
-            } else {
-                await msg.reply('❌ Invalid command name. Available commands: ' + Object.keys(dynamicCommands).join(', '));
-                return true;
-            }
+        const commandToUpdate = parts[1].toLowerCase();
+        const newValue = parts.slice(2).join(' ');
+        
+        if (dynamicCommands.hasOwnProperty(commandToUpdate)) {
+            dynamicCommands[commandToUpdate] = newValue;
+            await msg.reply(`✅ Command ${commandToUpdate} has been updated to: ${newValue}`);
+            return true;
+        } else {
+            await msg.reply('❌ Invalid command name. Available commands: ' + Object.keys(dynamicCommands).join(', '));
+            return true;
         }
     }
     
+    // Schedule a message
+    // Format: !schedule <groupId> <YYYY-MM-DD HH:mm> <message>
+    else if (command.startsWith('!schedule ')) {
+        try {
+            const groupId = parts[1];
+            const dateStr = parts[2];
+            const timeStr = parts[3];
+            const message = parts.slice(4).join(' ');
+            
+            if (!groupId || !dateStr || !timeStr || !message) {
+                await msg.reply('Format: !schedule <groupId> <YYYY-MM-DD> <HH:mm> <message>');
+                return true;
+            }
+
+            const dateTime = moment(`${dateStr} ${timeStr}`, 'YYYY-MM-DD HH:mm').toDate();
+            const scheduleId = await scheduleMessage(groupId, dateTime, message);
+            
+            await msg.reply(`✅ Message scheduled for ${formatDateTime(dateTime)}\nSchedule ID: ${scheduleId}`);
+        } catch (error) {
+            await msg.reply(`❌ Error scheduling message: ${error.message}`);
+        }
+        return true;
+    }
+    
+    // List scheduled messages
+    else if (command === '!listschedules') {
+        if (scheduledMessages.size === 0) {
+            await msg.reply('No scheduled messages.');
+            return true;
+        }
+
+        let response = '*Scheduled Messages:*\n\n';
+        for (const [id, schedule] of scheduledMessages) {
+            response += `ID: ${id}\nGroup: ${schedule.groupId}\nTime: ${formatDateTime(schedule.dateTime)}\nMessage: ${schedule.message}\n\n`;
+        }
+        await msg.reply(response);
+        return true;
+    }
+    
+    // Cancel a scheduled message
+    else if (command.startsWith('!cancelschedule ')) {
+        const scheduleId = parts[1];
+        const schedule = scheduledMessages.get(scheduleId);
+        
+        if (!schedule) {
+            await msg.reply('❌ Schedule not found.');
+            return true;
+        }
+
+        clearTimeout(schedule.timeoutId);
+        scheduledMessages.delete(scheduleId);
+        await saveSchedules();
+        await msg.reply(`✅ Scheduled message cancelled: ${scheduleId}`);
+        return true;
+    }
+
     // Show all current values
     if (command === '!showcommands') {
         let response = '*Current Command Values:*\n\n';
@@ -351,8 +488,9 @@ client.on('qr', async (qr) => {
     }
 });
 
-client.on('ready', () => {
+client.on('ready', async () => {
     console.log('Client is ready!');
+    await loadSchedules();  // Load saved schedules
     io.emit('ready');
 });
 
