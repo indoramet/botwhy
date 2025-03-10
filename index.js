@@ -405,7 +405,8 @@ const client = new Client({
             '--no-zygote',
             '--deterministic-fetch',
             '--disable-features=IsolateOrigins',
-            '--disable-features=site-per-process'
+            '--disable-features=site-per-process',
+            '--disable-blink-features=AutomationControlled'
         ],
         defaultViewport: {
             width: 800,
@@ -418,11 +419,12 @@ const client = new Client({
         executablePath: '/usr/bin/chromium',
         browserWSEndpoint: null,
         ignoreHTTPSErrors: true,
-        timeout: 0
+        timeout: 0,
+        protocolTimeout: 0
     },
     webVersionCache: {
-        type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2408.52.html'
+        type: 'local',
+        path: '/app/sessions/.version-cache'
     },
     restartOnAuthFail: true,
     qrMaxRetries: 5,
@@ -430,7 +432,8 @@ const client = new Client({
     qrTimeoutMs: 0,
     takeoverOnConflict: true,
     takeoverTimeoutMs: 0,
-    bypassCSP: true
+    bypassCSP: true,
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
 });
     
 let isClientReady = false;
@@ -443,11 +446,31 @@ async function initializeClient() {
         
         // Ensure sessions directory exists
         const sessionsPath = '/app/sessions';
+        const versionCachePath = '/app/sessions/.version-cache';
+        
         try {
             await fs.access(sessionsPath);
+            console.log('Sessions directory exists');
         } catch (error) {
             console.log('Creating sessions directory...');
             await fs.mkdir(sessionsPath, { recursive: true });
+        }
+
+        try {
+            await fs.access(versionCachePath);
+            console.log('Version cache exists');
+        } catch (error) {
+            console.log('Creating version cache directory...');
+            await fs.mkdir(path.dirname(versionCachePath), { recursive: true });
+        }
+        
+        // Clear any existing browser data
+        try {
+            const browserDataPath = path.join(sessionsPath, 'bot-whatsapp/Default');
+            await fs.rm(browserDataPath, { recursive: true, force: true });
+            console.log('Cleared existing browser data');
+        } catch (error) {
+            console.log('No existing browser data to clear');
         }
         
         console.log('Initializing client...');
@@ -464,11 +487,15 @@ async function initializeClient() {
                     console.error('Error destroying stuck client:', error);
                 }
                 console.log('Exiting process for container restart...');
-                process.exit(1); // Let the container restart
+                process.exit(1);
             }
-        }, 60000); // 60 seconds timeout
+        }, 120000); // Increased to 120 seconds timeout
     } catch (error) {
         console.error('Failed to initialize client:', error);
+        if (error.message.includes('Failed to launch') || error.message.includes('Target closed')) {
+            console.log('Critical initialization error, forcing restart...');
+            process.exit(1);
+        }
         handleReconnect();
     }
 }
@@ -515,6 +542,8 @@ client.on('ready', async () => {
     isClientReady = true;
     reconnectAttempts = 0;
     try {
+        // Add delay before loading chats
+        await new Promise(resolve => setTimeout(resolve, 3000));
         const chats = await client.getChats();
         console.log(`Loaded ${chats.length} chats`);
         await loadSchedules();
@@ -522,7 +551,8 @@ client.on('ready', async () => {
         io.emit('ready');
     } catch (error) {
         console.error('Error in ready event:', error);
-        if (!isClientReady) {
+        // Only attempt reconnect if the error is fatal
+        if (error.message.includes('Protocol error') || error.message.includes('Target closed') || !isClientReady) {
             handleReconnect();
         }
     }
