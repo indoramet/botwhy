@@ -1,11 +1,66 @@
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const express = require('express');
 const { Server } = require('socket.io');
 const http = require('http');
 const path = require('path');
 const QRCode = require('qrcode');
 const moment = require('moment');
+const sharp = require('sharp');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+const fileType = require('file-type');
+const fs = require('fs').promises;
 require('dotenv').config();
+
+ffmpeg.setFfmpegPath(ffmpegPath);
+
+// Function to process media for sticker
+async function processMediaForSticker(mediaData, isAnimated = false) {
+    const tempPath = path.join(__dirname, `temp_${Date.now()}`);
+    await fs.writeFile(tempPath, mediaData, 'base64');
+    
+    try {
+        if (isAnimated) {
+            // Process animated sticker (GIF/Video)
+            const outputPath = `${tempPath}_converted.webp`;
+            await new Promise((resolve, reject) => {
+                ffmpeg(tempPath)
+                    .toFormat('webp')
+                    .addOutputOptions([
+                        '-vf', 'scale=512:512:force_original_aspect_ratio=decrease,format=rgba,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=#00000000',
+                        '-lossless', '1',
+                        '-loop', '0',
+                        '-preset', 'default',
+                        '-an',
+                        '-vsync', '0',
+                        '-t', '5' // Limit to 5 seconds
+                    ])
+                    .save(outputPath)
+                    .on('end', resolve)
+                    .on('error', reject);
+            });
+            const processedData = await fs.readFile(outputPath);
+            await fs.unlink(tempPath);
+            await fs.unlink(outputPath);
+            return processedData.toString('base64');
+        } else {
+            // Process static image sticker
+            const processedImage = await sharp(tempPath)
+                .resize(512, 512, {
+                    fit: 'contain',
+                    background: { r: 0, g: 0, b: 0, alpha: 0 }
+                })
+                .toFormat('webp')
+                .toBuffer();
+            
+            await fs.unlink(tempPath);
+            return processedImage.toString('base64');
+        }
+    } catch (error) {
+        await fs.unlink(tempPath).catch(() => {});
+        throw error;
+    }
+}
 
 // Inisialisasi Express
 const app = express();
@@ -71,10 +126,13 @@ const client = new Client({
             '--no-zygote',
             '--disable-gpu',
             '--disable-software-rasterizer',
-            '--disable-extensions'
+            '--disable-extensions',
+            '--disable-web-security',
+            '--disable-features=IsolateOrigins,site-per-process'
         ],
         headless: true,
-        timeout: 100000
+        timeout: 100000,
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
     }
 });
 
@@ -167,7 +225,34 @@ client.on('message', async msg => {
             
             // Hanya respons jika mention bot atau pesan pribadi
             if (!chat.isGroup || (chat.isGroup && msg.mentionedIds.includes(client.info.wid._serialized))) {
-                if (command === '!jadwal' || command === 'kapan praktikum?') {
+                if (command === '!sticker' || command === '!stiker') {
+                    const quotedMsg = await msg.getQuotedMessage();
+                    if (msg.hasMedia || (quotedMsg && quotedMsg.hasMedia)) {
+                        const targetMsg = msg.hasMedia ? msg : quotedMsg;
+                        try {
+                            const media = await targetMsg.downloadMedia();
+                            if (!media) {
+                                await msg.reply('Gagal mengunduh media. Pastikan media valid dan dapat diakses.');
+                                return;
+                            }
+
+                            // Check if it's a video/gif or image
+                            const isAnimated = media.mimetype.includes('video') || media.mimetype.includes('gif');
+                            
+                            // Process the media
+                            const stickerData = await processMediaForSticker(media.data, isAnimated);
+                            const stickerMedia = new MessageMedia('image/webp', stickerData);
+                            
+                            await msg.reply(stickerMedia, null, { sendMediaAsSticker: true });
+                        } catch (error) {
+                            console.error('Error creating sticker:', error);
+                            await msg.reply('Maaf, terjadi kesalahan saat membuat sticker. Pastikan file yang dikirim adalah gambar atau video yang valid.');
+                        }
+                    } else {
+                        await msg.reply('Kirim atau reply gambar/video dengan caption !sticker untuk membuat sticker');
+                    }
+                }
+                else if (command === '!jadwal' || command === 'kapan praktikum?') {
                     await msg.reply('Jadwal praktikum akan diumumkan melalui web. Silakan cek pengumuman terakhir atau hubungi asisten lab.');
                 }
                 else if (command === '!nilai' || command === 'nilai praktikum?') {
@@ -220,6 +305,7 @@ client.on('message', async msg => {
 !laporan - Cara upload laporan
 !who made you - Info pembuat bot
 !contact - Info kontak
+!sticker/!stiker - Buat sticker dari gambar atau video
 !bantuan - Menampilkan bantuan ini`);
                 }
             } else if (chat.isGroup && command.startsWith('!')) {
@@ -242,10 +328,12 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Mulai server pada port 3000
+// Update the server listening configuration
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`Server berjalan di http://localhost:${PORT}`);
+const HOST = '0.0.0.0';
+
+server.listen(PORT, HOST, () => {
+    console.log(`Server running on http://${HOST}:${PORT}`);
 });
 
 // Inisialisasi koneksi WhatsApp
