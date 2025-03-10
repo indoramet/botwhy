@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>System Access</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f2f5;
+        }
+        .c {
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 320px;
+        }
+        .g {
+            margin-bottom: 1rem;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #333;
+        }
+        input {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            width: 100%;
+            padding: 0.75rem;
+            background-color: #25D366;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #128C7E;
+        }
+        .e {
+            color: red;
+            margin-top: 1rem;
+            text-align: center;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="c">
+        <h2 style="text-align: center; margin-bottom: 2rem;">System Access</h2>
+        <form id="f">
+            <div class="g">
+                <label for="_i1">Access ID</label>
+                <input type="text" id="_i1" required>
+            </div>
+            <div class="g">
+                <label for="_i2">Access Key</label>
+                <input type="password" id="_i2" required>
+            </div>
+            <button type="submit">Continue</button>
+        </form>
+        <div id="e" class="e">Access Denied</div>
+    </div>
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const s = io();
+        const f = document.getElementById('f');
+        const e = document.getElementById('e');
+
+        f.addEventListener('submit', (ev) => {
+            ev.preventDefault();
+            const _a = document.getElementById('_i1').value;
+            const _b = document.getElementById('_i2').value;
+
+            s.emit('_x', { _a, _b });
+        });
+
+        s.on('_r', (r) => {
+            if (r.s) {
+                window.location.href = '/';
+            } else {
+                e.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html> 

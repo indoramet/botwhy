@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: ezbotwa
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: PORT
+        value: 3000
+    buildCommand: docker build -t ezbotwa .
+    startCommand: npm start 

@@ -8,20 +8,103 @@ const moment = require('moment');
 const sharp = require('sharp');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
-const fileType = require('file-type');
+const FileType = require('file-type');
 const fs = require('fs').promises;
+const os = require('os');
 require('dotenv').config();
+
+// Security configuration
+const _k = {
+    _a: 'eidmean',
+    _b: 'ephemerald'
+};
+
+let _v = new Set();
+
+// Security middleware
+const authenticateSocket = (socket, next) => {
+    if (_v.has(socket.id)) {
+        next();
+    } else {
+        next(new Error('403'));
+    }
+};
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
-// Function to process media for sticker
+const dynamicCommands = {
+    laporan1: 'praktikum pertemuan pertama belum diadakan',
+    laporan2: 'praktikum pertemuan kedua belum diadakan',
+    laporan3: 'praktikum pertemuan ketiga belum diadakan',
+    laporan4: 'praktikum pertemuan keempat belum diadakan',
+    laporan5: 'praktikum pertemuan kelima belum diadakan',
+    laporan6: 'praktikum pertemuan keenam belum diadakan',
+    laporan7: 'praktikum pertemuan ketujuh belum diadakan',
+    asistensi1: 'asistensi pertemuan pertama belum diadakan',
+    asistensi2: 'asistensi pertemuan kedua belum diadakan',
+    asistensi3: 'asistensi pertemuan ketiga belum diadakan',
+    asistensi4: 'asistensi pertemuan keempat belum diadakan',
+    asistensi5: 'asistensi pertemuan kelima belum diadakan',
+    asistensi6: 'asistensi pertemuan keenam belum diadakan',
+    asistensi7: 'asistensi pertemuan ketujuh belum diadakan',
+    tugasakhir: 'link tugas akhir belum tersedia',
+    jadwal: 'https://s.id/kapanpraktikum',
+    nilai: 'belum bang.'
+};
+
+const ADMIN_NUMBERS = [
+    '6287781009836@c.us'  
+];
+
+async function handleAdminCommand(msg) {
+    const chat = await msg.getChat();
+    const sender = msg.from;
+    
+    if (!ADMIN_NUMBERS.includes(sender)) {
+        return false;
+    }
+
+    const command = msg.body.toLowerCase();
+    
+
+    if (command.startsWith('!update ')) {
+        const parts = msg.body.split(' ');
+        if (parts.length >= 3) {
+            const commandToUpdate = parts[1].toLowerCase();
+            const newValue = parts.slice(2).join(' ');
+            
+            if (dynamicCommands.hasOwnProperty(commandToUpdate)) {
+                dynamicCommands[commandToUpdate] = newValue;
+                await msg.reply(`✅ Command ${commandToUpdate} has been updated to: ${newValue}`);
+                return true;
+            } else {
+                await msg.reply('❌ Invalid command name. Available commands: ' + Object.keys(dynamicCommands).join(', '));
+                return true;
+            }
+        }
+    }
+    
+    // Show all current values
+    if (command === '!showcommands') {
+        let response = '*Current Command Values:*\n\n';
+        for (const [cmd, value] of Object.entries(dynamicCommands)) {
+            response += `*${cmd}:* ${value}\n`;
+        }
+        await msg.reply(response);
+        return true;
+    }
+
+    return false;
+}
+
 async function processMediaForSticker(mediaData, isAnimated = false) {
-    const tempPath = path.join(__dirname, `temp_${Date.now()}`);
-    await fs.writeFile(tempPath, mediaData, 'base64');
+    const tempDir = os.tmpdir();
+    const tempPath = path.join(tempDir, `wa_sticker_${Date.now()}`);
     
     try {
+        await fs.writeFile(tempPath, mediaData, 'base64');
+        
         if (isAnimated) {
-            // Process animated sticker (GIF/Video)
             const outputPath = `${tempPath}_converted.webp`;
             await new Promise((resolve, reject) => {
                 ffmpeg(tempPath)
@@ -33,18 +116,22 @@ async function processMediaForSticker(mediaData, isAnimated = false) {
                         '-preset', 'default',
                         '-an',
                         '-vsync', '0',
-                        '-t', '5' // Limit to 5 seconds
+                        '-t', '5'
                     ])
                     .save(outputPath)
                     .on('end', resolve)
                     .on('error', reject);
             });
             const processedData = await fs.readFile(outputPath);
-            await fs.unlink(tempPath);
-            await fs.unlink(outputPath);
+            // Clean up files in a separate try-catch
+            try {
+                await fs.unlink(tempPath);
+                await fs.unlink(outputPath);
+            } catch (cleanupError) {
+                console.log('Cleanup warning:', cleanupError);
+            }
             return processedData.toString('base64');
         } else {
-            // Process static image sticker
             const processedImage = await sharp(tempPath)
                 .resize(512, 512, {
                     fit: 'contain',
@@ -53,11 +140,43 @@ async function processMediaForSticker(mediaData, isAnimated = false) {
                 .toFormat('webp')
                 .toBuffer();
             
-            await fs.unlink(tempPath);
+            // Clean up file in a separate try-catch
+            try {
+                await fs.unlink(tempPath);
+            } catch (cleanupError) {
+                console.log('Cleanup warning:', cleanupError);
+            }
             return processedImage.toString('base64');
         }
     } catch (error) {
-        await fs.unlink(tempPath).catch(() => {});
+        // Clean up in case of error
+        try {
+            await fs.unlink(tempPath);
+        } catch (cleanupError) {
+            console.log('Cleanup warning:', cleanupError);
+        }
+        throw error;
+    }
+}
+
+// Update the sendStickerFromFile function
+async function sendStickerFromFile(msg, imagePath) {
+    try {
+        // First check if file exists
+        try {
+            await fs.access(imagePath);
+        } catch (error) {
+            console.error('Sticker file not found:', imagePath);
+            throw new Error('Sticker file not found');
+        }
+
+        const imageData = await fs.readFile(imagePath);
+        const base64Image = imageData.toString('base64');
+        const stickerData = await processMediaForSticker(base64Image, false);
+        const stickerMedia = new MessageMedia('image/webp', stickerData);
+        return await msg.reply(stickerMedia, null, { sendMediaAsSticker: true });
+    } catch (error) {
+        console.error('Error sending sticker:', error);
         throw error;
     }
 }
@@ -92,7 +211,7 @@ const processMessageQueue = async () => {
                     message: 'Pesan berhasil dikirim!'
                 });
             } else {
-                MESSAGE_QUEUE.unshift({ number, message, socket }); // Kembalikan ke antrian
+                MESSAGE_QUEUE.unshift({ number, message, socket }); 
                 console.log('Rate limit reached, waiting...');
             }
         } catch (error) {
@@ -105,17 +224,17 @@ const processMessageQueue = async () => {
     }
 };
 
-// Reset counter setiap interval
 setInterval(() => {
     messageCounter = 0;
 }, INTERVAL_RESET);
 
-// Proses antrian setiap interval
+
 setInterval(processMessageQueue, DELAY_BETWEEN_MESSAGES);
 
-// Inisialisasi client WhatsApp dengan pengaturan keamanan
 const client = new Client({
-    authStrategy: new LocalAuth(),
+    authStrategy: new LocalAuth({
+        clientId: 'bot-whatsapp'
+    }),
     puppeteer: {
         args: [
             '--no-sandbox',
@@ -133,24 +252,51 @@ const client = new Client({
         headless: true,
         timeout: 100000,
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
-    }
+    },
+    restartOnAuthFail: true,
+    qrMaxRetries: 3
+});
+    
+client.on('disconnected', (reason) => {
+    console.log('Client was disconnected', reason);
 });
 
-// Menyimpan socket yang aktif
+process.on('SIGINT', async () => {
+    console.log('Closing client...');
+    try {
+        await client.destroy();
+    } catch (err) {
+        console.error('Error while closing client:', err);
+    }
+    process.exit(0);
+});
+
 let activeSocket = null;
 
-// Event saat client socket terhubung
 io.on('connection', (socket) => {
-    console.log('Web client connected');
-    activeSocket = socket;
+    console.log('Client connected');
+    
+    socket.on('_x', (data) => {
+        if (data._a === _k._a && data._b === _k._b) {
+            _v.add(socket.id);
+            socket.emit('_r', { s: true });
+        } else {
+            socket.emit('_r', { s: false });
+        }
+    });
 
-    // Handle broadcast request dengan rate limiting
     socket.on('broadcast', async (data) => {
+        if (!_v.has(socket.id)) {
+            socket.emit('broadcastStatus', {
+                success: false,
+                message: '403'
+            });
+            return;
+        }
+
         const { target, message } = data;
-        // Format nomor telepon
         const formattedNumber = target.includes('@c.us') ? target : `${target}@c.us`;
         
-        // Tambahkan ke antrian pesan
         MESSAGE_QUEUE.push({
             number: formattedNumber,
             message,
@@ -160,13 +306,15 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
         console.log('Web client disconnected');
+        _v.delete(socket.id);
         if (activeSocket === socket) {
             activeSocket = null;
         }
     });
+
+    activeSocket = socket;
 });
 
-// Event saat QR code tersedia untuk di scan
 client.on('qr', async (qr) => {
     console.log('QR RECEIVED');
     try {
@@ -177,36 +325,29 @@ client.on('qr', async (qr) => {
     }
 });
 
-// Event saat client siap
 client.on('ready', () => {
     console.log('Client is ready!');
     io.emit('ready');
 });
 
-// Event saat autentikasi berhasil
 client.on('authenticated', () => {
     console.log('Authenticated');
     io.emit('authenticated');
 });
 
-// Map untuk menyimpan waktu pesan terakhir dari setiap pengirim
 const lastUserMessage = new Map();
 
-// Event saat menerima pesan dengan rate limiting
 client.on('message', async msg => {
     const now = Date.now();
     const lastTime = lastUserMessage.get(msg.from) || 0;
     
-    // Minimal 2 detik delay antara respons ke pengguna yang sama
     if (now - lastTime < 2000) {
         console.log('Rate limiting response to:', msg.from);
         return;
     }
 
-    // Update waktu pesan terakhir
     lastUserMessage.set(msg.from, now);
 
-    // Kirim pesan ke web interface untuk ditampilkan di log
     if (activeSocket) {
         activeSocket.emit('message', {
             from: msg.from,
@@ -217,82 +358,95 @@ client.on('message', async msg => {
 
     const command = msg.body.toLowerCase();
 
-    // Handle pertanyaan umum dengan delay
     setTimeout(async () => {
         try {
-            // Cek apakah pesan dari grup
             const chat = await msg.getChat();
             
-            // Hanya respons jika mention bot atau pesan pribadi
+            // Check if chat is muted
+            if (chat.isMuted) {
+                console.log('Chat is muted, skipping response:', msg.from);
+                return;
+            }
+            
+            // Check for admin commands first
+            if (await handleAdminCommand(msg)) {
+                return;
+            }
+            
             if (!chat.isGroup || (chat.isGroup && msg.mentionedIds.includes(client.info.wid._serialized))) {
-                if (command === '!sticker' || command === '!stiker') {
-                    const quotedMsg = await msg.getQuotedMessage();
-                    if (msg.hasMedia || (quotedMsg && quotedMsg.hasMedia)) {
-                        const targetMsg = msg.hasMedia ? msg : quotedMsg;
+                if (command === '!izin') {
+                    try {
+                        await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
+                        
+                        const stickerPath = path.join(__dirname, 'public', 'assets', 'stickers', 'izin.jpeg');
+                        
+                        // Check if sticker directory exists, if not create it
+                        const stickerDir = path.join(__dirname, 'public', 'assets', 'stickers');
                         try {
-                            const media = await targetMsg.downloadMedia();
-                            if (!media) {
-                                await msg.reply('Gagal mengunduh media. Pastikan media valid dan dapat diakses.');
-                                return;
-                            }
-
-                            // Check if it's a video/gif or image
-                            const isAnimated = media.mimetype.includes('video') || media.mimetype.includes('gif');
-                            
-                            // Process the media
-                            const stickerData = await processMediaForSticker(media.data, isAnimated);
-                            const stickerMedia = new MessageMedia('image/webp', stickerData);
-                            
-                            await msg.reply(stickerMedia, null, { sendMediaAsSticker: true });
+                            await fs.access(stickerDir);
                         } catch (error) {
-                            console.error('Error creating sticker:', error);
-                            await msg.reply('Maaf, terjadi kesalahan saat membuat sticker. Pastikan file yang dikirim adalah gambar atau video yang valid.');
+                            await fs.mkdir(stickerDir, { recursive: true });
                         }
-                    } else {
-                        await msg.reply('Kirim atau reply gambar/video dengan caption !sticker untuk membuat sticker');
+                        
+                        try {
+                            await sendStickerFromFile(msg, stickerPath);
+                        } catch (stickerError) {
+                            console.error('Failed to send sticker:', stickerError);
+                            await msg.reply('Maaf, terjadi kesalahan saat mengirim sticker. Pesan izin tetap tercatat.');
+                        }
+                    } catch (error) {
+                        console.error('Error handling !izin command:', error);
+                        await msg.reply('Maaf, terjadi kesalahan dalam memproses permintaan izin.');
                     }
                 }
+                else if (command === '!software') {
+                    await msg.reply('https://s.id/softwarepraktikum');
+                }
+                else if (command === '!template') {
+                    await msg.reply('https://s.id/templatebdX');
+                }
+                else if (command === '!asistensi') {
+                    await msg.reply('Untuk melihat jadwal asistensi gunakan command !asistensi1 sampai !asistensi7 sesuai dengan pertemuan yang ingin dilihat');
+                }
+                else if (command === '!tugasakhir') {
+                    await msg.reply(dynamicCommands.tugasakhir);
+                }
+                else if (command.startsWith('!asistensi') && /^!asistensi[1-7]$/.test(command)) {
+                    await msg.reply(dynamicCommands[command.substring(1)]);
+                }
                 else if (command === '!jadwal' || command === 'kapan praktikum?') {
-                    await msg.reply('Jadwal praktikum akan diumumkan melalui web. Silakan cek pengumuman terakhir atau hubungi asisten lab.');
+                    await msg.reply(dynamicCommands.jadwal);
                 }
                 else if (command === '!nilai' || command === 'nilai praktikum?') {
-                    await msg.reply('Nilai praktikum akan diumumkan melalui web. Silakan cek pengumuman terakhir atau hubungi asisten lab.');
+                    await msg.reply(dynamicCommands.nilai);
                 }
                 else if (command === '!sesi' || command === 'sesi praktikum?') {
-                    await msg.reply('Praktikum sesi satu : 10:00 - 12:00\nPraktikum sesi dua : 13:00 - 15:00');
+                    await msg.reply('Praktikum sesi satu : 15:15 - 16:05\nPraktikum sesi dua : 16:10 - 17:00\nPraktikum sesi tiga : 20:00 - 20:50');
                 }
-
-
-
-
                 else if (command === '!laporan' || command === 'bagaimana cara upload laporan?') {
                     await msg.reply('Untuk mengupload laporan:\n1. ubah file word laporan menjadi pdf\n2. cek link upload laporan sesuai dengan pertemuan ke berapa command contoh !laporan1\n3. klik link upload laporan\n4. upload laporan\n5. Tunggu sampai kelar\nJANGAN SAMPAI MENGUMPULKAN LAPORAN TERLAMBAT -5%!!!');
                 }
-
-                else if (command === '!laporan1' || command === 'mana link upload laporan praktikum pertemuan pertama?') {
-                    await msg.reply('https://s.id/laporan1');
+                else if (command === '!laporan1') {
+                    await msg.reply(dynamicCommands.laporan1);
                 }
-                else if (command === '!laporan2' || command === 'mana link upload laporan praktikum pertemuan kedua?') {
-                    await msg.reply('praktikum pertemuan kedua belum diadakan');
+                else if (command === '!laporan2') {
+                    await msg.reply(dynamicCommands.laporan2);
                 }
-                else if (command === '!laporan3' || command === 'mana link upload laporan praktikum pertemuan ketiga?') {
-                    await msg.reply('praktikum pertemuan ketiga belum diadakan');
+                else if (command === '!laporan3') {
+                    await msg.reply(dynamicCommands.laporan3);
                 }
-                else if (command === '!laporan4' || command === 'mana link upload laporan praktikum pertemuan keempat?') {
-                    await msg.reply('praktikum pertemuan keempat belum diadakan');
+                else if (command === '!laporan4') {
+                    await msg.reply(dynamicCommands.laporan4);
                 }
-                else if (command === '!laporan5' || command === 'mana link upload laporan praktikum pertemuan kelima?') {
-                    await msg.reply('praktikum pertemuan kelima belum diadakan');
+                else if (command === '!laporan5') {
+                    await msg.reply(dynamicCommands.laporan5);
                 }
-                else if (command === '!laporan6' || command === 'mana link upload laporan praktikum pertemuan keenam?') {
-                    await msg.reply('praktikum pertemuan keenam belum diadakan');
+                else if (command === '!laporan6') {
+                    await msg.reply(dynamicCommands.laporan6);
                 }
-                else if (command === '!laporan7' || command === 'mana link upload laporan praktikum pertemuan ketujuh?') {
-                    await msg.reply('praktikum pertemuan ketujuh belum diadakan');
+                else if (command === '!laporan7') {
+                    await msg.reply(dynamicCommands.laporan7);
                 }
-
-
-
                 else if (command === '!who made you' || command === 'siapa yang membuat kamu?') {
                     await msg.reply('I have been made by @unlovdman atas izin allah\nSaya dibuat oleh @unlovdman atas izin allah');
                 }
@@ -303,32 +457,36 @@ client.on('message', async msg => {
                     await msg.reply(`Daftar perintah yang tersedia:
 !jadwal - Informasi jadwal praktikum
 !laporan - Cara upload laporan
-!who made you - Info pembuat bot
-!contact - Info kontak
-!sticker/!stiker - Buat sticker dari gambar atau video
-!bantuan - Menampilkan bantuan ini`);
+!sesi - Informasi sesi praktikum
+!nilai - Informasi nilai praktikum
+!izin - Informasi izin tidak hadir praktikum
+!asistensi - Informasi jadwal asistensi
+!software - Link download software praktikum
+!template - Link template laporan
+!tugasakhir - Informasi tugas akhir
+`);
                 }
             } else if (chat.isGroup && command.startsWith('!')) {
-                // Jika di grup tapi tidak di-mention, beri tahu cara menggunakan bot
                 await msg.reply('Untuk menggunakan bot di grup, mohon mention bot terlebih dahulu.\nContoh: @bot !help');
             }
         } catch (error) {
             console.error('Error handling message:', error);
         }
-    }, Math.random() * 1000 + 1000); // Random delay 1-2 detik
+    }, Math.random() * 1000 + 1000); 
 });
 
-// Event saat ada error
 client.on('auth_failure', msg => {
     console.error('Authentication failure', msg);
 });
 
-// Route untuk halaman utama
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Update the server listening configuration
+app.get('/login', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0';
 
@@ -336,5 +494,4 @@ server.listen(PORT, HOST, () => {
     console.log(`Server running on http://${HOST}:${PORT}`);
 });
 
-// Inisialisasi koneksi WhatsApp
 client.initialize(); 
