@@ -406,7 +406,16 @@ const client = new Client({
             '--deterministic-fetch',
             '--disable-features=IsolateOrigins',
             '--disable-features=site-per-process',
-            '--disable-blink-features=AutomationControlled'
+            '--disable-blink-features=AutomationControlled',
+            '--disable-sync',
+            '--disable-background-networking',
+            '--disable-default-apps',
+            '--disable-translate',
+            '--disable-component-extensions-with-background-pages',
+            '--disable-background-timer-throttling',
+            '--disable-renderer-backgrounding',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-ipc-flooding-protection'
         ],
         defaultViewport: {
             width: 800,
@@ -420,11 +429,12 @@ const client = new Client({
         browserWSEndpoint: null,
         ignoreHTTPSErrors: true,
         timeout: 0,
-        protocolTimeout: 0
+        protocolTimeout: 0,
+        waitForInitialPage: true
     },
+    webVersion: '2.2408.52',
     webVersionCache: {
-        type: 'local',
-        path: '/app/sessions/.version-cache'
+        type: 'none'
     },
     restartOnAuthFail: true,
     qrMaxRetries: 5,
@@ -446,22 +456,12 @@ async function initializeClient() {
         
         // Ensure sessions directory exists
         const sessionsPath = '/app/sessions';
-        const versionCachePath = '/app/sessions/.version-cache';
-        
         try {
             await fs.access(sessionsPath);
             console.log('Sessions directory exists');
         } catch (error) {
             console.log('Creating sessions directory...');
             await fs.mkdir(sessionsPath, { recursive: true });
-        }
-
-        try {
-            await fs.access(versionCachePath);
-            console.log('Version cache exists');
-        } catch (error) {
-            console.log('Creating version cache directory...');
-            await fs.mkdir(path.dirname(versionCachePath), { recursive: true });
         }
         
         // Clear any existing browser data
@@ -472,9 +472,21 @@ async function initializeClient() {
         } catch (error) {
             console.log('No existing browser data to clear');
         }
+
+        // Clear any existing auth state
+        try {
+            const authPath = path.join(sessionsPath, 'bot-whatsapp');
+            await fs.rm(authPath, { recursive: true, force: true });
+            console.log('Cleared existing auth state');
+        } catch (error) {
+            console.log('No existing auth state to clear');
+        }
         
         console.log('Initializing client...');
-        await client.initialize();
+        await client.initialize().catch(async (error) => {
+            console.error('Error during initialization:', error);
+            throw error;
+        });
         
         // Add a timeout to restart if stuck in connecting state
         setTimeout(async () => {
@@ -489,14 +501,17 @@ async function initializeClient() {
                 console.log('Exiting process for container restart...');
                 process.exit(1);
             }
-        }, 120000); // Increased to 120 seconds timeout
+        }, 180000); // Increased to 180 seconds timeout
     } catch (error) {
         console.error('Failed to initialize client:', error);
-        if (error.message.includes('Failed to launch') || error.message.includes('Target closed')) {
+        if (error.message.includes('Failed to launch') || 
+            error.message.includes('Target closed') || 
+            error.message.includes('Protocol error') ||
+            error.message.includes('Session Closed')) {
             console.log('Critical initialization error, forcing restart...');
             process.exit(1);
         }
-        handleReconnect();
+        await handleReconnect();
     }
 }
 
