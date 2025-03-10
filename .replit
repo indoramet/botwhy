@@ -6,7 +6,7 @@ channel = "stable-22_11"
 
 [env]
 PATH = "/home/runner/$REPL_SLUG/.config/npm/node_global/bin:/home/runner/$REPL_SLUG/node_modules/.bin"
-PUPPETEER_EXECUTABLE_PATH = "/usr/bin/chromium"
+PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
 
 [packager]
 language = "nodejs"
@@ -20,8 +20,4 @@ pattern = "**/*.js"
 syntax = "javascript"
 
 [languages.javascript.languageServer]
-start = [ "typescript-language-server", "--stdio" ]
-
-[deployment]
-run = ["sh", "-c", "pm2 start index.js --name ezbotwa && pm2 save && pm2 logs"]
-deploymentTarget = "cloudrun" 
+start = [ "typescript-language-server", "--stdio" ] 

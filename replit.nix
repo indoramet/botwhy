@@ -3,7 +3,9 @@
         pkgs.nodejs-16_x
         pkgs.chromium
         pkgs.ffmpeg
-        pkgs.python3
-        pkgs.git
     ];
+    env = {
+        PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true";
+        PUPPETEER_EXECUTABLE_PATH = "${pkgs.chromium}/bin/chromium";
+    };
 } 

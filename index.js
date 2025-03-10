@@ -238,32 +238,47 @@ setInterval(processMessageQueue, DELAY_BETWEEN_MESSAGES);
 
 const client = new Client({
     authStrategy: new LocalAuth({
-        clientId: 'bot-whatsapp'
+        clientId: 'bot-whatsapp',
+        dataPath: './sessions'
     }),
     puppeteer: {
+        headless: true,
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
-            '--no-zygote',
             '--disable-gpu',
-            '--disable-software-rasterizer',
             '--disable-extensions',
             '--disable-web-security',
-            '--disable-features=IsolateOrigins,site-per-process'
+            '--disable-features=site-per-process,IsolateOrigins',
+            '--window-size=1920,1080'
         ],
-        headless: true,
-        timeout: 100000,
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
+        defaultViewport: {
+            width: 1920,
+            height: 1080
+        },
+        browserWSEndpoint: null,
+        ignoreHTTPSErrors: true,
+        timeout: 60000
     },
     restartOnAuthFail: true,
-    qrMaxRetries: 3
+    qrMaxRetries: 5,
+    authTimeoutMs: 60000,
+    qrTimeoutMs: 40000
 });
     
-client.on('disconnected', (reason) => {
-    console.log('Client was disconnected', reason);
+client.on('disconnected', async (reason) => {
+    console.log('Client was disconnected:', reason);
+    // Try to reconnect
+    try {
+        console.log('Attempting to reconnect...');
+        await client.destroy();
+        await client.initialize();
+    } catch (error) {
+        console.error('Failed to reconnect:', error);
+    }
 });
 
 process.on('SIGINT', async () => {
@@ -480,8 +495,24 @@ client.on('message', async msg => {
     }, Math.random() * 1000 + 1000); 
 });
 
-client.on('auth_failure', msg => {
-    console.error('Authentication failure', msg);
+client.on('auth_failure', async (msg) => {
+    console.error('Authentication failure:', msg);
+    // Clear auth data and reinitialize
+    try {
+        await client.destroy();
+        await client.initialize();
+    } catch (error) {
+        console.error('Failed to reinitialize after auth failure:', error);
+    }
+});
+
+// Handle unexpected errors
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+    console.error('Uncaught Exception:', error);
 });
 
 app.get('/', (req, res) => {
