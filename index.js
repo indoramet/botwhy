@@ -376,7 +376,11 @@ setInterval(processMessageQueue, DELAY_BETWEEN_MESSAGES);
 const client = new Client({
     authStrategy: new LocalAuth({
         clientId: 'bot-whatsapp',
-        dataPath: '/app/sessions'
+        dataPath: '/app/sessions',
+        backupSyncIntervalMs: 300000,
+        dataStore: {
+            storePath: '/app/sessions/.store'
+        }
     }),
     puppeteer: {
         headless: true,
@@ -415,7 +419,11 @@ const client = new Client({
             '--disable-background-timer-throttling',
             '--disable-renderer-backgrounding',
             '--disable-backgrounding-occluded-windows',
-            '--disable-ipc-flooding-protection'
+            '--disable-ipc-flooding-protection',
+            '--enable-features=NetworkService,NetworkServiceInProcess',
+            '--force-color-profile=srgb',
+            '--disable-features=Translate',
+            '--disable-features=GlobalMediaControls'
         ],
         defaultViewport: {
             width: 800,
@@ -430,7 +438,10 @@ const client = new Client({
         ignoreHTTPSErrors: true,
         timeout: 0,
         protocolTimeout: 0,
-        waitForInitialPage: true
+        waitForInitialPage: true,
+        handleSIGINT: false,
+        handleSIGTERM: false,
+        handleSIGHUP: false
     },
     webVersion: '2.2408.52',
     webVersionCache: {
@@ -443,12 +454,14 @@ const client = new Client({
     takeoverOnConflict: true,
     takeoverTimeoutMs: 0,
     bypassCSP: true,
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    linkPreviewApiServers: ['https://preview.whatsapp.com/api/v1/preview']
 });
     
 let isClientReady = false;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_INTERVAL = 60000; // 1 minute
 
 async function initializeClient() {
     try {
@@ -463,30 +476,43 @@ async function initializeClient() {
             console.log('Creating sessions directory...');
             await fs.mkdir(sessionsPath, { recursive: true });
         }
-        
-        // Clear any existing browser data
-        try {
-            const browserDataPath = path.join(sessionsPath, 'bot-whatsapp/Default');
-            await fs.rm(browserDataPath, { recursive: true, force: true });
-            console.log('Cleared existing browser data');
-        } catch (error) {
-            console.log('No existing browser data to clear');
-        }
 
-        // Clear any existing auth state
+        // Ensure store directory exists
+        const storePath = '/app/sessions/.store';
         try {
-            const authPath = path.join(sessionsPath, 'bot-whatsapp');
-            await fs.rm(authPath, { recursive: true, force: true });
-            console.log('Cleared existing auth state');
+            await fs.access(storePath);
+            console.log('Store directory exists');
         } catch (error) {
-            console.log('No existing auth state to clear');
+            console.log('Creating store directory...');
+            await fs.mkdir(storePath, { recursive: true });
         }
         
-        console.log('Initializing client...');
-        await client.initialize().catch(async (error) => {
-            console.error('Error during initialization:', error);
-            throw error;
-        });
+        // Only clear browser data if initialization fails
+        let shouldClearData = false;
+        
+        try {
+            console.log('Attempting to initialize client...');
+            await client.initialize();
+        } catch (initError) {
+            console.error('Initial initialization failed:', initError);
+            shouldClearData = true;
+            
+            if (shouldClearData) {
+                console.log('Clearing browser data for fresh start...');
+                try {
+                    const browserDataPath = path.join(sessionsPath, 'bot-whatsapp/Default');
+                    await fs.rm(browserDataPath, { recursive: true, force: true });
+                    console.log('Cleared browser data');
+                    
+                    // Try initialization again
+                    console.log('Retrying initialization...');
+                    await client.initialize();
+                } catch (error) {
+                    console.error('Error during data cleanup or reinitialization:', error);
+                    throw error;
+                }
+            }
+        }
         
         // Add a timeout to restart if stuck in connecting state
         setTimeout(async () => {
@@ -501,7 +527,7 @@ async function initializeClient() {
                 console.log('Exiting process for container restart...');
                 process.exit(1);
             }
-        }, 180000); // Increased to 180 seconds timeout
+        }, 300000); // Increased to 300 seconds (5 minutes) timeout
     } catch (error) {
         console.error('Failed to initialize client:', error);
         if (error.message.includes('Failed to launch') || 
@@ -517,74 +543,67 @@ async function initializeClient() {
 
 async function handleReconnect() {
     if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-        console.error('Max reconnection attempts reached. Restarting process...');
+        console.log('Max reconnection attempts reached, restarting process...');
         process.exit(1);
-        return;
     }
-
+    
     reconnectAttempts++;
-    console.log(`Reconnection attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`);
+    console.log(`Attempting to reconnect (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
     
     try {
-        console.log('Destroying existing client...');
+        await client.destroy();
+        console.log('Previous client instance destroyed');
+    } catch (error) {
+        console.error('Error destroying previous client instance:', error);
+    }
+    
+    setTimeout(async () => {
+        try {
+            await initializeClient();
+        } catch (error) {
+            console.error('Reconnection attempt failed:', error);
+            await handleReconnect();
+        }
+    }, RECONNECT_INTERVAL);
+}
+
+client.on('ready', () => {
+    console.log('Client is ready');
+    isClientReady = true;
+    reconnectAttempts = 0; // Reset reconnect attempts on ready
+});
+
+client.on('disconnected', async (reason) => {
+    console.log('Client disconnected:', reason);
+    isClientReady = false;
+    await handleReconnect();
+});
+
+client.on('auth_failure', async () => {
+    console.log('Auth failure, attempting to reconnect...');
+    isClientReady = false;
+    await handleReconnect();
+});
+
+// Handle process signals
+process.on('SIGTERM', async () => {
+    console.log('Received SIGTERM signal');
+    try {
         await client.destroy();
         console.log('Client destroyed successfully');
     } catch (error) {
         console.error('Error destroying client:', error);
     }
-
-    // Clear the sessions directory
-    try {
-        console.log('Clearing sessions directory...');
-        await fs.rm('/app/sessions', { recursive: true, force: true });
-        await fs.mkdir('/app/sessions', { recursive: true });
-        console.log('Sessions directory cleared and recreated');
-    } catch (error) {
-        console.error('Error clearing sessions:', error);
-    }
-
-    // Wait before trying to reconnect
-    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
-    console.log(`Waiting ${delay}ms before reconnecting...`);
-    await new Promise(resolve => setTimeout(resolve, delay));
-    
-    console.log('Attempting to reinitialize client...');
-    await initializeClient();
-}
-
-client.on('ready', async () => {
-    console.log('Client is ready!');
-    isClientReady = true;
-    reconnectAttempts = 0;
-    try {
-        // Add delay before loading chats
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        const chats = await client.getChats();
-        console.log(`Loaded ${chats.length} chats`);
-        await loadSchedules();
-        console.log('Loaded scheduled messages');
-        io.emit('ready');
-    } catch (error) {
-        console.error('Error in ready event:', error);
-        // Only attempt reconnect if the error is fatal
-        if (error.message.includes('Protocol error') || error.message.includes('Target closed') || !isClientReady) {
-            handleReconnect();
-        }
-    }
-});
-
-client.on('disconnected', async (reason) => {
-    console.log('Client was disconnected:', reason);
-    isClientReady = false;
-    handleReconnect();
+    process.exit(0);
 });
 
 process.on('SIGINT', async () => {
-    console.log('Closing client...');
+    console.log('Received SIGINT signal');
     try {
         await client.destroy();
-    } catch (err) {
-        console.error('Error while closing client:', err);
+        console.log('Client destroyed successfully');
+    } catch (error) {
+        console.error('Error destroying client:', error);
     }
     process.exit(0);
 });
@@ -644,8 +663,8 @@ client.on('qr', async (qr) => {
 });
 
 client.on('authenticated', () => {
-    console.log('Authenticated');
-    io.emit('authenticated');
+    console.log('Client authenticated');
+    reconnectAttempts = 0; // Reset reconnect attempts on successful authentication
 });
 
 const lastUserMessage = new Map();
@@ -820,11 +839,6 @@ client.on('message', async msg => {
     } catch (error) {
         console.error('Critical error in message handler:', error);
     }
-});
-
-client.on('auth_failure', async (msg) => {
-    console.error('Authentication failure:', msg);
-    io.emit('auth_failure', 'Authentication failed');
 });
 
 client.on('change_state', state => {
