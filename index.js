@@ -444,27 +444,10 @@ client.on('authenticated', async () => {
         global.pingInterval = null;
     }
     
-    // Start fresh connection check
-    startConnectionCheck();
+    console.log('Authentication successful, waiting for full initialization...');
     
-    // Try to initialize immediately
-    try {
-        console.log('Authentication successful, initializing client...');
-        if (!botState.isReady) {
-            // Load chats in background
-            client.getChats().catch(error => {
-                console.error('Error loading initial chats:', error);
-            });
-            
-            // Verify connection
-            const page = client.pupPage;
-            if (page) {
-                await page.evaluate(() => console.log('Page is responsive after authentication'));
-            }
-        }
-    } catch (error) {
-        console.error('Error during post-authentication initialization:', error);
-    }
+    // Don't try to access any WhatsApp functions here
+    // Wait for the ready event instead
 });
 
 client.on('ready', async () => {
@@ -475,48 +458,41 @@ client.on('ready', async () => {
     io.emit('ready');
     
     try {
+        // Wait a moment for WhatsApp Web to fully initialize
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        // Start connection check
+        startConnectionCheck();
+        
         // Verify WhatsApp connection
         const page = client.pupPage;
         if (page) {
-            await page.evaluate(() => {
-                console.log('WhatsApp Web page is fully loaded');
-                return true;
+            const isStoreReady = await page.evaluate(() => {
+                return window.Store && window.Store.Chat ? true : false;
             });
+            
+            if (!isStoreReady) {
+                console.log('WhatsApp Store not yet ready, waiting...');
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+            
+            console.log('WhatsApp Web page is fully loaded');
         }
         
-        // Load initial chats
-        const chats = await client.getChats();
-        console.log(`Loaded ${chats.length} chats successfully`);
+        // Now try to load chats
+        try {
+            const chats = await client.getChats();
+            console.log(`Loaded ${chats.length} chats successfully`);
+        } catch (chatError) {
+            console.error('Error loading initial chats:', chatError);
+            // Don't throw the error, just log it
+        }
         
     } catch (error) {
         console.error('Error in ready event:', error);
         // Don't throw the error, just log it
     }
 });
-
-// Update handleReconnect to be simpler
-async function handleReconnect() {
-    const MAX_RECONNECT_ATTEMPTS = 3;
-    
-    if (botState.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-        console.log('Max reconnection attempts reached, restarting process...');
-        process.exit(1);
-    }
-
-    botState.reconnectAttempts++;
-    console.log(`Attempting to reconnect (attempt ${botState.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
-
-    try {
-        await client.destroy();
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        await client.initialize();
-    } catch (error) {
-        console.error('Reconnection attempt failed:', error);
-        if (botState.reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-            setTimeout(handleReconnect, 5000);
-        }
-    }
-}
 
 // Update connection check to be more robust
 function startConnectionCheck() {
@@ -526,8 +502,8 @@ function startConnectionCheck() {
     }
     
     global.pingInterval = setInterval(async () => {
-        if (!botState.isAuthenticated) {
-            console.log('Not authenticated, skipping connection check');
+        if (!botState.isAuthenticated || !botState.isReady) {
+            console.log('Not fully initialized, skipping connection check');
             return;
         }
         
@@ -536,12 +512,12 @@ function startConnectionCheck() {
                 throw new Error('No pupPage available');
             }
             
-            const isOnline = await client.pupPage.evaluate(() => {
-                return window.Store && window.Store.State ? true : false;
+            const isStoreReady = await client.pupPage.evaluate(() => {
+                return window.Store && window.Store.State && window.Store.Chat ? true : false;
             });
             
-            if (!isOnline) {
-                throw new Error('WhatsApp Store not available');
+            if (!isStoreReady) {
+                throw new Error('WhatsApp Store not fully available');
             }
             
             botState.lastPing = Date.now();
@@ -554,6 +530,58 @@ function startConnectionCheck() {
             }
         }
     }, 30000);
+}
+
+// Update handleReconnect to be more careful
+async function handleReconnect() {
+    const MAX_RECONNECT_ATTEMPTS = 3;
+    
+    if (botState.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        console.log('Max reconnection attempts reached, restarting process...');
+        process.exit(1);
+    }
+
+    botState.reconnectAttempts++;
+    console.log(`Attempting to reconnect (attempt ${botState.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+
+    try {
+        // First destroy the client
+        await client.destroy();
+        console.log('Previous client instance destroyed');
+        
+        // Wait a moment before reinitializing
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        // Reset state
+        botState.isReady = false;
+        botState.isAuthenticated = false;
+        
+        // Initialize again
+        await client.initialize();
+        
+        // Wait for either authenticated or ready event
+        await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                reject(new Error('Reconnection timeout'));
+            }, 30000);
+            
+            const handleSuccess = () => {
+                clearTimeout(timeout);
+                resolve();
+            };
+            
+            client.once('ready', handleSuccess);
+            client.once('authenticated', handleSuccess);
+        });
+        
+    } catch (error) {
+        console.error('Reconnection attempt failed:', error);
+        if (botState.reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+            // Wait before trying again
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            await handleReconnect();
+        }
+    }
 }
 
 client.on('disconnected', async (reason) => {
