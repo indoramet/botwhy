@@ -16,10 +16,11 @@
     "file-type": "^16.5.4",
     "fluent-ffmpeg": "^2.1.2",
     "moment": "^2.29.4",
+    "puppeteer": "^19.7.0",
     "qrcode": "^1.5.1",
     "sharp": "^0.30.7",
     "socket.io": "^4.6.1",
-    "whatsapp-web.js": "^1.19.4"
+    "whatsapp-web.js": "^1.21.0"
   },
   "devDependencies": {
     "nodemon": "^2.0.22"
