@@ -302,7 +302,7 @@ setInterval(processMessageQueue, DELAY_BETWEEN_MESSAGES);
 const client = new Client({
     authStrategy: new LocalAuth({
         clientId: 'bot-whatsapp',
-        dataPath: './sessions'
+        dataPath: path.join(os.tmpdir(), 'sessions')
     }),
     puppeteer: {
         headless: true,
@@ -311,47 +311,38 @@ const client = new Client({
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
             '--disable-gpu',
-            '--disable-web-security',
-            '--aggressive-cache-discard',
-            '--disable-cache',
-            '--disable-application-cache',
-            '--disable-offline-load-stale-cache',
-            '--disk-cache-size=0',
-            '--disable-background-networking',
-            '--disable-default-apps',
-            '--disable-extensions',
-            '--disable-sync',
-            '--disable-translate',
-            '--hide-scrollbars',
-            '--metrics-recording-only',
-            '--mute-audio',
             '--no-first-run',
-            '--safebrowsing-disable-auto-update',
-            '--ignore-certificate-errors',
-            '--ignore-ssl-errors',
-            '--ignore-certificate-errors-spki-list',
-            '--window-size=1280,720',
-            '--single-process',
             '--no-zygote',
-            '--disable-features=site-per-process',
-            '--disable-features=TranslateUI',
-            '--disable-breakpad',
-            '--disable-component-update',
-            '--disable-domain-reliability',
-            '--disable-features=AudioServiceOutOfProcess',
-            '--disable-features=IsolateOrigins',
-            '--disable-hang-monitor',
-            '--disable-ipc-flooding-protection',
-            '--disable-notifications',
-            '--disable-offer-store-unmasked-wallet-cards',
-            '--disable-popup-blocking',
-            '--disable-print-preview',
-            '--disable-prompt-on-repost',
-            '--disable-renderer-backgrounding',
-            '--disable-speech-api',
-            '--disable-sync',
+            '--single-process',
+            '--disable-extensions',
             '--disable-webgl',
-            '--disable-webgl2'
+            '--disable-threaded-animation',
+            '--disable-threaded-scrolling',
+            '--disable-in-process-stack-traces',
+            '--disable-histogram-customizer',
+            '--disable-site-isolation-trials',
+            '--disable-composited-antialiasing',
+            '--disable-canvas-aa',
+            '--disable-3d-apis',
+            '--disable-accelerated-2d-canvas',
+            '--disable-accelerated-jpeg-decoding',
+            '--disable-accelerated-mjpeg-decode',
+            '--disable-app-list-dismiss-on-blur',
+            '--disable-accelerated-video-decode',
+            '--disable-features=IsolateOrigins,site-per-process,TranslateUI,BlinkGenPropertyTrees',
+            '--disable-blink-features=AutomationControlled',
+            '--disable-dev-shm-usage',
+            '--disable-ipc-flooding-protection',
+            '--ignore-certificate-errors',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding',
+            '--disable-background-timer-throttling',
+            '--disable-background-networking',
+            '--metrics-recording-only',
+            '--no-default-browser-check',
+            '--no-experiments',
+            '--mute-audio',
+            '--window-size=1280,720'
         ],
         defaultViewport: {
             width: 1280,
@@ -359,16 +350,16 @@ const client = new Client({
         },
         executablePath: process.env.CHROME_BIN || '/usr/bin/chromium',
         ignoreHTTPSErrors: true,
-        timeout: 60000,
-        protocolTimeout: 60000
+        timeout: 120000,
+        protocolTimeout: 120000
     },
     webVersion: '2.2204.13',
     restartOnAuthFail: false,
     qrMaxRetries: 3,
-    authTimeoutMs: 60000,
-    qrTimeoutMs: 60000,
+    authTimeoutMs: 120000,
+    qrTimeoutMs: 120000,
     takeoverOnConflict: false,
-    takeoverTimeoutMs: 60000,
+    takeoverTimeoutMs: 120000,
     bypassCSP: true
 });
 
@@ -1065,14 +1056,18 @@ async function initializeClient() {
     try {
         console.log('Starting WhatsApp client initialization...');
         
-        // Ensure sessions directory exists
-        const sessionsPath = './sessions';
+        // Use temporary directory for sessions
+        const sessionsPath = path.join(os.tmpdir(), 'sessions');
         try {
-            await fs.access(sessionsPath);
-            console.log('Sessions directory exists');
-        } catch (error) {
-            console.log('Creating sessions directory...');
+            // Clean up old sessions
+            await fs.rm(sessionsPath, { recursive: true, force: true });
+            console.log('Cleaned up old sessions');
+            
+            // Create fresh sessions directory
             await fs.mkdir(sessionsPath, { recursive: true });
+            console.log('Created fresh sessions directory');
+        } catch (error) {
+            console.warn('Warning during sessions cleanup:', error.message);
         }
 
         // Initialize the client with retry logic
@@ -1082,6 +1077,10 @@ async function initializeClient() {
         while (initAttempts < maxInitAttempts) {
             try {
                 console.log(`Attempting to initialize client (attempt ${initAttempts + 1}/${maxInitAttempts})...`);
+                
+                // Ensure clean environment before each attempt
+                global.gc && global.gc();
+                
                 await client.initialize();
                 console.log('Client initialized successfully');
                 break;
@@ -1093,8 +1092,17 @@ async function initializeClient() {
                     throw initError;
                 }
 
+                // Clean up between attempts
+                try {
+                    await fs.rm(sessionsPath, { recursive: true, force: true });
+                    await fs.mkdir(sessionsPath, { recursive: true });
+                    console.log('Reset sessions for retry');
+                } catch (error) {
+                    console.warn('Warning during retry cleanup:', error.message);
+                }
+
                 // Wait before retrying
-                await new Promise(resolve => setTimeout(resolve, 5000));
+                await new Promise(resolve => setTimeout(resolve, 10000));
             }
         }
     } catch (error) {
@@ -1106,8 +1114,8 @@ async function initializeClient() {
 // Update the startBot function
 async function startBot() {
     try {
-        // Check if sessions directory exists and has content
-        const sessionsPath = './sessions';
+        // Use temporary directory for sessions
+        const sessionsPath = path.join(os.tmpdir(), 'sessions');
         try {
             await fs.access(path.join(sessionsPath, 'bot-whatsapp'));
             botState.sessionExists = true;
