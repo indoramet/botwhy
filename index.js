@@ -633,12 +633,17 @@ client.on('message', async msg => {
     try {
         // Get chat before anything else
         const chat = await msg.getChat();
+        const isGroup = Boolean(chat.isGroup);
+        
+        // Get client info if not already available
+        const clientInfo = await client.getWid();
+        const botNumber = clientInfo._serialized;
         
         console.log('Received message:', {
             from: msg.from,
             body: msg.body,
-            isGroup: chat.isGroup,
-            mentionedIds: msg._data.mentionedJidList || []
+            isGroup: isGroup,
+            mentionedIds: Array.isArray(msg.mentionedIds) ? msg.mentionedIds : []
         });
 
         const now = Date.now();
@@ -663,9 +668,10 @@ client.on('message', async msg => {
         console.log('Processing command:', command);
 
         console.log('Chat info:', {
-            isGroup: chat.isGroup,
+            isGroup: isGroup,
             name: chat.name,
-            isMuted: Boolean(chat.isMuted)
+            isMuted: Boolean(chat.isMuted),
+            botNumber: botNumber
         });
         
         // Check if chat is muted
@@ -680,27 +686,34 @@ client.on('message', async msg => {
             return;
         }
 
-        // Get client info if not already available
-        const clientInfo = client.info || await client.getWid();
-        const botNumber = clientInfo.wid?._serialized || clientInfo._serialized;
-
         // Process commands for both private chats and group chats
-        const shouldProcessCommand = !chat.isGroup || 
-            (chat.isGroup && (
-                msg._data.mentionedJidList?.includes(botNumber) ||
+        const shouldProcessCommand = !isGroup || 
+            (isGroup && (
+                msg.mentionedIds?.includes(botNumber) ||
                 msg.body.toLowerCase().includes('@bot')
             ));
+
+        console.log('Should process command:', shouldProcessCommand, {
+            isGroup: isGroup,
+            hasBotMention: msg.mentionedIds?.includes(botNumber),
+            hasAtBot: msg.body.toLowerCase().includes('@bot')
+        });
 
         if (shouldProcessCommand) {
             console.log('Processing command in chat:', command);
             
             // Remove bot mention and number from command in group chats
             let cleanCommand = command;
-            if (chat.isGroup) {
-                cleanCommand = command
-                    .replace(new RegExp(`@${botNumber.split('@')[0]}`, 'g'), '')
-                    .replace(/@bot/gi, '')
-                    .trim();
+            if (isGroup) {
+                // Remove the bot's number if mentioned
+                if (botNumber) {
+                    const botNumberWithoutSuffix = botNumber.split('@')[0];
+                    cleanCommand = cleanCommand.replace(new RegExp(`@${botNumberWithoutSuffix}\\s*`, 'g'), '');
+                }
+                // Remove @bot
+                cleanCommand = cleanCommand.replace(/@bot\s*/gi, '');
+                // Clean up any extra whitespace
+                cleanCommand = cleanCommand.trim();
             }
             
             console.log('Clean command:', cleanCommand);
@@ -800,7 +813,7 @@ client.on('message', async msg => {
                 console.error('Error executing command:', cmdError);
                 await msg.reply('Maaf, terjadi kesalahan dalam memproses perintah. Silakan coba lagi.');
             }
-        } else if (chat.isGroup && command.startsWith('!')) {
+        } else if (isGroup && command.startsWith('!')) {
             console.log('Group message without mention, sending hint');
             await msg.reply('Untuk menggunakan bot di grup, mohon mention bot terlebih dahulu.\nContoh: @bot !help');
         }
