@@ -1,14 +1,10 @@
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+const { Client, LocalAuth } = require('whatsapp-web.js');
 const express = require('express');
 const { Server } = require('socket.io');
 const http = require('http');
 const path = require('path');
 const QRCode = require('qrcode');
 const moment = require('moment');
-const sharp = require('sharp');
-const ffmpeg = require('fluent-ffmpeg');
-const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
-const FileType = require('file-type');
 const fs = require('fs').promises;
 const os = require('os');
 require('dotenv').config();
@@ -29,8 +25,6 @@ const authenticateSocket = (socket, next) => {
         next(new Error('403'));
     }
 };
-
-ffmpeg.setFfmpegPath(ffmpegPath);
 
 const dynamicCommands = {
     laporan1: 'praktikum pertemuan pertama belum diadakan',
@@ -232,90 +226,6 @@ async function handleAdminCommand(msg) {
     }
 
     return false;
-}
-
-async function processMediaForSticker(mediaData, isAnimated = false) {
-    const tempDir = os.tmpdir();
-    const tempPath = path.join(tempDir, `wa_sticker_${Date.now()}`);
-    
-    try {
-        await fs.writeFile(tempPath, mediaData, 'base64');
-        
-        if (isAnimated) {
-            const outputPath = `${tempPath}_converted.webp`;
-            await new Promise((resolve, reject) => {
-                ffmpeg(tempPath)
-                    .toFormat('webp')
-                    .addOutputOptions([
-                        '-vf', 'scale=512:512:force_original_aspect_ratio=decrease,format=rgba,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=#00000000',
-                        '-lossless', '1',
-                        '-loop', '0',
-                        '-preset', 'default',
-                        '-an',
-                        '-vsync', '0',
-                        '-t', '5'
-                    ])
-                    .save(outputPath)
-                    .on('end', resolve)
-                    .on('error', reject);
-            });
-            const processedData = await fs.readFile(outputPath);
-            // Clean up files in a separate try-catch
-            try {
-                await fs.unlink(tempPath);
-                await fs.unlink(outputPath);
-            } catch (cleanupError) {
-                console.log('Cleanup warning:', cleanupError);
-            }
-            return processedData.toString('base64');
-        } else {
-            const processedImage = await sharp(tempPath)
-                .resize(512, 512, {
-                    fit: 'contain',
-                    background: { r: 0, g: 0, b: 0, alpha: 0 }
-                })
-                .toFormat('webp')
-                .toBuffer();
-            
-            // Clean up file in a separate try-catch
-            try {
-                await fs.unlink(tempPath);
-            } catch (cleanupError) {
-                console.log('Cleanup warning:', cleanupError);
-            }
-            return processedImage.toString('base64');
-        }
-    } catch (error) {
-        // Clean up in case of error
-        try {
-            await fs.unlink(tempPath);
-        } catch (cleanupError) {
-            console.log('Cleanup warning:', cleanupError);
-        }
-        throw error;
-    }
-}
-
-// Update the sendStickerFromFile function
-async function sendStickerFromFile(msg, imagePath) {
-    try {
-        // First check if file exists
-        try {
-            await fs.access(imagePath);
-        } catch (error) {
-            console.error('Sticker file not found:', imagePath);
-            throw new Error('Sticker file not found');
-        }
-
-        const imageData = await fs.readFile(imagePath);
-        const base64Image = imageData.toString('base64');
-        const stickerData = await processMediaForSticker(base64Image, false);
-        const stickerMedia = new MessageMedia('image/webp', stickerData);
-        return await msg.reply(stickerMedia, null, { sendMediaAsSticker: true });
-    } catch (error) {
-        console.error('Error sending sticker:', error);
-        throw error;
-    }
 }
 
 // Inisialisasi Express
@@ -647,31 +557,31 @@ client.on('message', async msg => {
         }
 
         // Rate limiting check
-    const now = Date.now();
-    const lastTime = lastUserMessage.get(msg.from) || 0;
-    
-    if (now - lastTime < 2000) {
-        console.log('Rate limiting response to:', msg.from);
-        return;
-    }
+        const now = Date.now();
+        const lastTime = lastUserMessage.get(msg.from) || 0;
+        
+        if (now - lastTime < 2000) {
+            console.log('Rate limiting response to:', msg.from);
+            return;
+        }
 
-    lastUserMessage.set(msg.from, now);
+        lastUserMessage.set(msg.from, now);
 
-    if (activeSocket) {
-        activeSocket.emit('message', {
-            from: msg.from,
-            body: msg.body,
-            time: moment().format('HH:mm:ss')
-        });
-    }
+        if (activeSocket) {
+            activeSocket.emit('message', {
+                from: msg.from,
+                body: msg.body,
+                time: moment().format('HH:mm:ss')
+            });
+        }
 
         // Check for admin commands first
         if (await handleAdminCommand(msg)) {
             console.log('Admin command handled');
             return;
-    }
+        }
 
-    const command = msg.body.toLowerCase();
+        const command = msg.body.toLowerCase();
         console.log('Processing command:', command);
 
         // Process commands for both private and group chats if they start with !
@@ -682,25 +592,6 @@ client.on('message', async msg => {
                 if (command === '!izin') {
                     console.log('Processing !izin command');
                     await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
-                    console.log('Sent initial !izin response');
-                    
-                    const stickerPath = path.join(__dirname, 'public', 'assets', 'stickers', 'izin.jpeg');
-                    console.log('Sticker path:', stickerPath);
-                    
-                    try {
-                        await fs.access(path.dirname(stickerPath));
-                    } catch (error) {
-                        console.log('Creating sticker directory');
-                        await fs.mkdir(path.dirname(stickerPath), { recursive: true });
-                    }
-                    
-                    try {
-                        await sendStickerFromFile(msg, stickerPath);
-                        console.log('Sticker sent successfully');
-                    } catch (stickerError) {
-                        console.error('Failed to send sticker:', stickerError);
-                        await msg.reply('Maaf, terjadi kesalahan saat mengirim sticker. Pesan izin tetap tercatat.');
-                    }
                 }
                 else if (command === '!software') {
                     await msg.reply('https://s.id/softwarepraktikum');
