@@ -1,13 +1,6 @@
 [build]
 builder = "NIXPACKS"
 buildCommand = "npm install"
-nixpacksPlan = """
-  phases:
-    setup:
-      nixPkgs:
-        - chromium
-        - nodejs
-"""
 
 [deploy]
 startCommand = "npm start"
