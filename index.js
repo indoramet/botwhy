@@ -296,19 +296,6 @@ async function processMediaForSticker(mediaData, isAnimated = false) {
     }
 }
 
-// Add retry utility function at the top level
-async function retryOperation(operation, maxRetries = 3, delay = 2000) {
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
-            return await operation();
-        } catch (error) {
-            console.log(`Attempt ${attempt}/${maxRetries} failed:`, error.message);
-            if (attempt === maxRetries) throw error;
-            await new Promise(resolve => setTimeout(resolve, delay));
-        }
-    }
-}
-
 // Update the sendStickerFromFile function
 async function sendStickerFromFile(msg, imagePath) {
     try {
@@ -320,33 +307,11 @@ async function sendStickerFromFile(msg, imagePath) {
             throw new Error('Sticker file not found');
         }
 
-        // Add delay before processing
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
         const imageData = await fs.readFile(imagePath);
         const base64Image = imageData.toString('base64');
-        
-        // Process media with retry
-        const stickerData = await retryOperation(async () => {
-            return await processMediaForSticker(base64Image, false);
-        });
-        
+        const stickerData = await processMediaForSticker(base64Image, false);
         const stickerMedia = new MessageMedia('image/webp', stickerData);
-        
-        // Check client state before sending
-        if (!client.pupPage || !client.info) {
-            console.log('Client not ready, attempting to reconnect...');
-            await handleReconnect();
-            throw new Error('Client reconnecting, please try again');
-        }
-        
-        // Add delay before sending
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        // Send sticker with retry
-        return await retryOperation(async () => {
-            return await msg.reply(stickerMedia, null, { sendMediaAsSticker: true });
-        }, 5, 2000); // Increase retries to 5 with 2 second delay
+        return await msg.reply(stickerMedia, null, { sendMediaAsSticker: true });
     } catch (error) {
         console.error('Error sending sticker:', error);
         throw error;
@@ -359,62 +324,8 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 // Health check endpoint
-app.get('/health', async (req, res) => {
-    try {
-        // Basic server health check
-        if (!server.listening) {
-            console.log('Health check failed: Server not listening');
-            return res.status(503).json({
-                status: 'error',
-                message: 'Server not listening'
-            });
-        }
-
-        // Check if client exists
-        if (!client) {
-            console.log('Health check failed: WhatsApp client not initialized');
-            return res.status(503).json({
-                status: 'error',
-                message: 'WhatsApp client not initialized'
-            });
-        }
-
-        // Check if client is ready or authenticated
-        if (!isReady && !isAuthenticated) {
-            console.log('Health check failed: Client not ready or authenticated');
-            return res.status(503).json({
-                status: 'error',
-                message: 'Client not ready or authenticated'
-            });
-        }
-
-        // Check if page exists and is responsive
-        try {
-            if (client.pupPage) {
-                await client.pupPage.evaluate(() => true);
-            }
-        } catch (error) {
-            console.log('Health check failed: Page not responsive');
-            return res.status(503).json({
-                status: 'error',
-                message: 'Page not responsive'
-            });
-        }
-
-        // All checks passed
-        console.log('Health check passed');
-        return res.status(200).json({
-            status: 'ok',
-            ready: isReady,
-            authenticated: isAuthenticated
-        });
-    } catch (error) {
-        console.error('Health check error:', error);
-        return res.status(503).json({
-            status: 'error',
-            message: error.message
-        });
-    }
+app.get('/health', (req, res) => {
+    res.status(200).send('OK');
 });
 
 // Serve static files
@@ -462,180 +373,95 @@ setInterval(() => {
 
 setInterval(processMessageQueue, DELAY_BETWEEN_MESSAGES);
 
-// Initialize state variables
-let isReady = false;
-let isAuthenticated = false;
-let lastQR = '';
-let initializationAttempts = 0;
-const MAX_INIT_ATTEMPTS = 3;
-const INIT_RETRY_DELAY = 10000; // 10 seconds
-
-// Ensure sessions directory exists
-const sessionsPath = process.env.RAILWAY_VOLUME_MOUNT ? '/data/sessions' : '/app/sessions';
-if (!fs.existsSync(sessionsPath)) {
-    fs.mkdirSync(sessionsPath, { recursive: true });
-}
-
-// Function to verify client state
-async function verifyClientState(client) {
-    let retries = 0;
-    const maxRetries = 5;
-    const retryDelay = 2000;
-
-    while (retries < maxRetries) {
-        try {
-            if (!client || !client.pupPage || !client.info) {
-                console.log(`[Attempt ${retries + 1}/${maxRetries}] Waiting for client state...`);
-                await new Promise(resolve => setTimeout(resolve, retryDelay));
-                retries++;
-                continue;
-            }
-
-            const page = await client.pupPage;
-            if (!page) {
-                throw new Error('Page not available');
-            }
-
-            const info = await client.info;
-            if (!info) {
-                throw new Error('Client info not available');
-            }
-
-            console.log('Client state verified successfully');
-            return true;
-        } catch (error) {
-            console.error(`Verification attempt ${retries + 1} failed:`, error.message);
-            retries++;
-            if (retries >= maxRetries) {
-                throw new Error('Failed to verify client state after maximum retries');
-            }
-            await new Promise(resolve => setTimeout(resolve, retryDelay));
+const client = new Client({
+    authStrategy: new LocalAuth({
+        clientId: 'bot-whatsapp',
+        dataPath: '/app/sessions',
+        backupSyncIntervalMs: 300000,
+        dataStore: {
+            storePath: '/app/sessions/.store'
         }
-    }
-    return false;
-}
-
-// Function to initialize client
-async function initializeClient() {
-    // Reset state
-    isReady = false;
-    isAuthenticated = false;
-    lastQR = '';
-    
-    try {
-        console.log('Initializing WhatsApp client...');
-        
-        // Create client with updated configuration
-        const client = new Client({
-            authStrategy: new LocalAuth({
-                clientId: "whatsapp-bot",
-                dataPath: sessionsPath
-            }),
-            puppeteer: {
-                headless: true,
-                args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-accelerated-2d-canvas',
-                    '--disable-gpu',
-                    '--window-size=1280,900',
-                    '--disable-background-timer-throttling',
-                    '--disable-backgrounding-occluded-windows',
-                    '--disable-renderer-backgrounding',
-                    '--no-first-run',
-                    '--disable-features=site-per-process',
-                    '--disable-web-security'
-                ],
-                defaultViewport: null,
-                executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
-                timeout: 120000,
-                protocolTimeout: 120000
-            },
-            qrMaxRetries: 5,
-            takeoverOnConflict: true,
-            takeoverTimeoutMs: 120000
-        });
-
-        // Add event listeners
-        client.on('qr', (qr) => {
-            console.log('QR Code received');
-            lastQR = qr;
-        });
-
-        client.on('ready', async () => {
-            console.log('Client is ready');
-            isReady = true;
-            isAuthenticated = true;
-            lastQR = '';
-        });
-
-        client.on('authenticated', () => {
-            console.log('Client is authenticated');
-            isAuthenticated = true;
-            lastQR = '';
-        });
-
-        client.on('auth_failure', (msg) => {
-            console.error('Authentication failed:', msg);
-            isAuthenticated = false;
-        });
-
-        client.on('disconnected', (reason) => {
-            console.log('Client was disconnected:', reason);
-            isReady = false;
-            isAuthenticated = false;
-            handleReconnect();
-        });
-
-        // Initialize client
-        await client.initialize();
-        
-        // Wait for initial setup
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        
-        // Verify client state
-        await verifyClientState(client);
-        
-        console.log('Client initialization completed successfully');
-        return client;
-    } catch (error) {
-        console.error('Error during client initialization:', error);
-        throw error;
-    }
-}
-
-// Function to handle client initialization with retries
-async function initializeWithRetries() {
-    while (initializationAttempts < MAX_INIT_ATTEMPTS) {
-        try {
-            initializationAttempts++;
-            console.log(`Attempting client initialization (Attempt ${initializationAttempts}/${MAX_INIT_ATTEMPTS})`);
-            
-            const client = await initializeClient();
-            initializationAttempts = 0; // Reset counter on success
-            return client;
-        } catch (error) {
-            console.error(`Initialization attempt ${initializationAttempts} failed:`, error.message);
-            
-            if (initializationAttempts >= MAX_INIT_ATTEMPTS) {
-                throw new Error('Failed to initialize client after maximum attempts');
-            }
-            
-            console.log(`Waiting ${INIT_RETRY_DELAY/1000} seconds before next attempt...`);
-            await new Promise(resolve => setTimeout(resolve, INIT_RETRY_DELAY));
-        }
-    }
-}
-
-// Start the client
-let client;
-try {
-    client = await initializeWithRetries();
-} catch (error) {
-    console.error('Failed to start WhatsApp client:', error);
-    process.exit(1);
-}
+    }),
+    puppeteer: {
+        headless: true,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--disable-gpu',
+            '--disable-extensions',
+            '--disable-web-security',
+            '--disable-features=site-per-process,IsolateOrigins',
+            '--window-size=800,600',
+            '--single-process',
+            '--no-zygote',
+            '--disable-features=AudioServiceOutOfProcess',
+            '--disable-features=IsolateOrigins,site-per-process',
+            '--disable-software-rasterizer',
+            '--ignore-certificate-errors',
+            '--ignore-certificate-errors-spki-list',
+            '--disable-infobars',
+            '--disable-notifications',
+            '--use-gl=disabled',
+            '--disable-setuid-sandbox',
+            '--no-zygote',
+            '--deterministic-fetch',
+            '--disable-features=IsolateOrigins',
+            '--disable-features=site-per-process',
+            '--disable-blink-features=AutomationControlled',
+            '--disable-sync',
+            '--disable-background-networking',
+            '--disable-default-apps',
+            '--disable-translate',
+            '--disable-component-extensions-with-background-pages',
+            '--disable-background-timer-throttling',
+            '--disable-renderer-backgrounding',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-ipc-flooding-protection',
+            '--enable-features=NetworkService,NetworkServiceInProcess',
+            '--force-color-profile=srgb',
+            '--disable-features=Translate',
+            '--disable-features=GlobalMediaControls',
+            '--disable-crash-reporter',
+            '--disable-breakpad',
+            '--disable-canvas-aa',
+            '--disable-2d-canvas-clip-aa',
+            '--disable-gl-drawing-for-tests'
+        ],
+        defaultViewport: {
+            width: 800,
+            height: 600,
+            deviceScaleFactor: 1,
+            hasTouch: false,
+            isLandscape: true,
+            isMobile: false
+        },
+        executablePath: '/usr/bin/chromium',
+        browserWSEndpoint: null,
+        ignoreHTTPSErrors: true,
+        timeout: 0,
+        protocolTimeout: 0,
+        waitForInitialPage: true,
+        handleSIGINT: false,
+        handleSIGTERM: false,
+        handleSIGHUP: false
+    },
+    webVersion: '2.2408.52',
+    webVersionCache: {
+        type: 'none'
+    },
+    restartOnAuthFail: false,
+    qrMaxRetries: 0,
+    authTimeoutMs: 0,
+    qrTimeoutMs: 0,
+    takeoverOnConflict: true,
+    takeoverTimeoutMs: 0,
+    bypassCSP: true,
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    linkPreviewApiServers: ['https://preview.whatsapp.com/api/v1/preview']
+});
 
 // Track bot state
 let botState = {
@@ -704,41 +530,13 @@ client.on('qr', async (qr) => {
         console.log('QR received while authenticated, ignoring...');
         return;
     }
-    console.log('QR RECEIVED - Generating QR code...');
+    console.log('QR RECEIVED');
     try {
-        // Add delay before generating QR
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        const qrImage = await QRCode.toDataURL(qr, {
-            errorCorrectionLevel: 'H',
-            margin: 4,
-            scale: 8,
-            width: 512
-        });
-        console.log('QR code generated successfully');
-        botState.lastQR = `<img src="${qrImage}" alt="QR Code" style="width: 512px; height: 512px;" />`;
+        const qrImage = await QRCode.toDataURL(qr);
+        botState.lastQR = `<img src="${qrImage}" alt="QR Code" />`;
         io.emit('qr', botState.lastQR);
-        
-        // Log QR code status
-        console.log('QR code emitted to all connected clients');
-        console.log('Waiting for scan...');
     } catch (err) {
         console.error('Error generating QR code:', err);
-        // Try to regenerate QR after error
-        setTimeout(async () => {
-            try {
-                const retryQrImage = await QRCode.toDataURL(qr, {
-                    errorCorrectionLevel: 'H',
-                    margin: 4,
-                    scale: 8,
-                    width: 512
-                });
-                botState.lastQR = `<img src="${retryQrImage}" alt="QR Code" style="width: 512px; height: 512px;" />`;
-                io.emit('qr', botState.lastQR);
-            } catch (retryErr) {
-                console.error('Retry QR generation failed:', retryErr);
-            }
-        }, 2000);
     }
 });
 
@@ -757,22 +555,14 @@ client.on('ready', async () => {
     
     try {
         // Add longer delay before loading chats
-        await new Promise(resolve => setTimeout(resolve, 10000));
+        await new Promise(resolve => setTimeout(resolve, 5000));
         
-        // Wrap chat loading in enhanced retry logic
+        // Wrap chat loading in retry logic
         let retries = 0;
-        const maxRetries = 5;
+        const maxRetries = 3;
         
         while (retries < maxRetries) {
             try {
-                // Verify client state before loading chats
-                if (!client.pupPage || !client.info) {
-                    throw new Error('Client state invalid');
-                }
-                
-                // Test page connection
-                await client.pupPage.evaluate(() => true);
-                
                 const chats = await client.getChats();
                 console.log(`Loaded ${chats.length} chats`);
                 io.emit('ready');
@@ -780,20 +570,18 @@ client.on('ready', async () => {
             } catch (error) {
                 retries++;
                 console.error(`Error loading chats (attempt ${retries}/${maxRetries}):`, error);
-                
                 if (retries === maxRetries) {
-                    console.log('Failed to load chats, attempting reconnection...');
-                    await handleReconnect();
-                    return;
+                    console.log('Failed to load chats, but continuing with bot operation');
+                    io.emit('ready');
+                } else {
+                    await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds before retry
                 }
-                
-                // Wait longer between retries
-                await new Promise(resolve => setTimeout(resolve, 10000));
             }
         }
     } catch (error) {
         console.error('Error in ready event:', error);
-        await handleReconnect();
+        // Don't throw the error, just log it and continue
+        io.emit('ready');
     }
 });
 
@@ -843,103 +631,133 @@ const lastUserMessage = new Map();
 
 client.on('message', async msg => {
     try {
-        // Add delay at the start of message processing
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
-        // Check client state with more detailed logging
-        if (!client.pupPage || !client.info) {
-            console.log('Client state check failed:');
-            console.log('pupPage exists:', !!client.pupPage);
-            console.log('info exists:', !!client.info);
-            await handleReconnect();
-            return;
-        }
-
-        // Verify page is still connected with retry
-        let pageConnected = false;
-        for (let i = 0; i < 3; i++) {
-            try {
-                await client.pupPage.evaluate(() => true);
-                pageConnected = true;
-                break;
-            } catch (pageError) {
-                console.log(`Page evaluation attempt ${i + 1} failed:`, pageError.message);
-                if (i < 2) await new Promise(resolve => setTimeout(resolve, 2000));
-            }
-        }
-
-        if (!pageConnected) {
-            console.log('Page connection verification failed, reconnecting...');
-            await handleReconnect();
+        // Wait for client to be ready
+        if (!client.info) {
+            console.log('Client info not yet available, waiting...');
             return;
         }
 
         // Get chat before anything else
         const chat = await msg.getChat();
         
+        // Check if chat is muted
         if (chat.isMuted) {
             console.log('Chat is muted, skipping response:', msg.from);
             return;
         }
 
-        // Rate limiting check with longer window
-        const now = Date.now();
-        const lastTime = lastUserMessage.get(msg.from) || 0;
-        
-        if (now - lastTime < 5000) { // Increased to 5 seconds
-            console.log('Rate limiting response to:', msg.from);
+        // Rate limiting check
+    const now = Date.now();
+    const lastTime = lastUserMessage.get(msg.from) || 0;
+    
+    if (now - lastTime < 2000) {
+        console.log('Rate limiting response to:', msg.from);
+        return;
+    }
+
+    lastUserMessage.set(msg.from, now);
+
+    if (activeSocket) {
+        activeSocket.emit('message', {
+            from: msg.from,
+            body: msg.body,
+            time: moment().format('HH:mm:ss')
+        });
+    }
+
+        // Check for admin commands first
+        if (await handleAdminCommand(msg)) {
+            console.log('Admin command handled');
             return;
-        }
+    }
 
-        lastUserMessage.set(msg.from, now);
-
-        // Process commands
-        const command = msg.body.toLowerCase();
+    const command = msg.body.toLowerCase();
         console.log('Processing command:', command);
 
-        // First handle non-sticker commands to avoid session issues
-        if (command.startsWith('!') && command !== '!izin') {
+        // Process commands for both private and group chats if they start with !
+        if (command.startsWith('!')) {
+            console.log('Processing command in chat:', command);
+            
             try {
-                // Add delay before processing command
-                await new Promise(resolve => setTimeout(resolve, 1000));
-
-                // Verify client state again before processing command
-                if (!client.pupPage || !client.info) {
-                    throw new Error('Client state invalid before command processing');
+                if (command === '!izin') {
+                    console.log('Processing !izin command');
+                    await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
+                    console.log('Sent initial !izin response');
+                    
+                    const stickerPath = path.join(__dirname, 'public', 'assets', 'stickers', 'izin.jpeg');
+                    console.log('Sticker path:', stickerPath);
+                    
+                    try {
+                        await fs.access(path.dirname(stickerPath));
+                    } catch (error) {
+                        console.log('Creating sticker directory');
+                        await fs.mkdir(path.dirname(stickerPath), { recursive: true });
+                    }
+                    
+                    try {
+                        await sendStickerFromFile(msg, stickerPath);
+                        console.log('Sticker sent successfully');
+                    } catch (stickerError) {
+                        console.error('Failed to send sticker:', stickerError);
+                        await msg.reply('Maaf, terjadi kesalahan saat mengirim sticker. Pesan izin tetap tercatat.');
+                    }
                 }
-
-                switch (command) {
-                    case '!software':
-                        await retryOperation(() => msg.reply('https://s.id/softwarepraktikum'), 3, 3000);
-                        break;
-                    case '!template':
-                        await retryOperation(() => msg.reply('https://s.id/templatebdX'), 3, 3000);
-                        break;
-                    case '!asistensi':
-                        await retryOperation(() => msg.reply('Untuk melihat jadwal asistensi gunakan command !asistensi1 sampai !asistensi7 sesuai dengan pertemuan yang ingin dilihat'), 3, 3000);
-                        break;
-                    case '!tugasakhir':
-                        await retryOperation(() => msg.reply(dynamicCommands.tugasakhir), 3, 3000);
-                        break;
-                    case '!jadwal':
-                    case 'kapan praktikum?':
-                        await retryOperation(() => msg.reply(dynamicCommands.jadwal), 3, 3000);
-                        break;
-                    case '!nilai':
-                    case 'nilai praktikum?':
-                        await retryOperation(() => msg.reply(dynamicCommands.nilai), 3, 3000);
-                        break;
-                    case '!sesi':
-                    case 'sesi praktikum?':
-                        await retryOperation(() => msg.reply('Praktikum sesi satu : 15:15 - 16:05\nPraktikum sesi dua : 16:10 - 17:00\nPraktikum sesi tiga : 20:00 - 20:50'), 3, 3000);
-                        break;
-                    case '!laporan':
-                    case 'bagaimana cara upload laporan?':
-                        await retryOperation(() => msg.reply('Untuk mengupload laporan:\n1. ubah file word laporan menjadi pdf\n2. cek link upload laporan sesuai dengan pertemuan ke berapa command contoh !laporan1\n3. klik link upload laporan\n4. upload laporan\n5. Tunggu sampai kelar\nJANGAN SAMPAI MENGUMPULKAN LAPORAN TERLAMBAT -5%!!!'), 3, 3000);
-                        break;
-                    case '!help':
-                    case '!bantuan':
-                        await retryOperation(() => msg.reply(`Daftar perintah yang tersedia:
+                else if (command === '!software') {
+                    await msg.reply('https://s.id/softwarepraktikum');
+                }
+                else if (command === '!template') {
+                    await msg.reply('https://s.id/templatebdX');
+                }
+                else if (command === '!asistensi') {
+                    await msg.reply('Untuk melihat jadwal asistensi gunakan command !asistensi1 sampai !asistensi7 sesuai dengan pertemuan yang ingin dilihat');
+                }
+                else if (command === '!tugasakhir') {
+                    await msg.reply(dynamicCommands.tugasakhir);
+                }
+                else if (command.startsWith('!asistensi') && /^!asistensi[1-7]$/.test(command)) {
+                    await msg.reply(dynamicCommands[command.substring(1)]);
+                }
+                else if (command === '!jadwal' || command === 'kapan praktikum?') {
+                    await msg.reply(dynamicCommands.jadwal);
+                }
+                else if (command === '!nilai' || command === 'nilai praktikum?') {
+                    await msg.reply(dynamicCommands.nilai);
+                }
+                else if (command === '!sesi' || command === 'sesi praktikum?') {
+                    await msg.reply('Praktikum sesi satu : 15:15 - 16:05\nPraktikum sesi dua : 16:10 - 17:00\nPraktikum sesi tiga : 20:00 - 20:50');
+                }
+                else if (command === '!laporan' || command === 'bagaimana cara upload laporan?') {
+                    await msg.reply('Untuk mengupload laporan:\n1. ubah file word laporan menjadi pdf\n2. cek link upload laporan sesuai dengan pertemuan ke berapa command contoh !laporan1\n3. klik link upload laporan\n4. upload laporan\n5. Tunggu sampai kelar\nJANGAN SAMPAI MENGUMPULKAN LAPORAN TERLAMBAT -5%!!!');
+                }
+                else if (command === '!laporan1') {
+                    await msg.reply(dynamicCommands.laporan1);
+                }
+                else if (command === '!laporan2') {
+                    await msg.reply(dynamicCommands.laporan2);
+                }
+                else if (command === '!laporan3') {
+                    await msg.reply(dynamicCommands.laporan3);
+                }
+                else if (command === '!laporan4') {
+                    await msg.reply(dynamicCommands.laporan4);
+                }
+                else if (command === '!laporan5') {
+                    await msg.reply(dynamicCommands.laporan5);
+                }
+                else if (command === '!laporan6') {
+                    await msg.reply(dynamicCommands.laporan6);
+                }
+                else if (command === '!laporan7') {
+                    await msg.reply(dynamicCommands.laporan7);
+                }
+                else if (command === '!who made you' || command === 'siapa yang membuat kamu?') {
+                    await msg.reply('I have been made by @unlovdman atas izin allah\nSaya dibuat oleh @unlovdman atas izin allah');
+                }
+                else if (command === '!contact' || command === 'gimana saya mengontak anda?') {
+                    await msg.reply('you can visit my portofolio web app https://unlovdman.vercel.app/ for more information');
+                }
+                else if (command === '!help' || command === '!bantuan') {
+                    await msg.reply(`Daftar perintah yang tersedia:
 !jadwal - Informasi jadwal praktikum
 !laporan - Cara upload laporan
 !sesi - Informasi sesi praktikum
@@ -948,70 +766,16 @@ client.on('message', async msg => {
 !asistensi - Informasi jadwal asistensi
 !software - Link download software praktikum
 !template - Link template laporan
-!tugasakhir - Informasi tugas akhir`), 3, 3000);
-                        break;
-                    default:
-                        if (command.startsWith('!asistensi') && /^!asistensi[1-7]$/.test(command)) {
-                            await retryOperation(() => msg.reply(dynamicCommands[command.substring(1)]), 3, 3000);
-                        } else if (command.startsWith('!laporan') && /^!laporan[1-7]$/.test(command)) {
-                            await retryOperation(() => msg.reply(dynamicCommands[command]), 3, 3000);
-                        }
-                        break;
+!tugasakhir - Informasi tugas akhir
+`);
                 }
             } catch (cmdError) {
                 console.error('Error executing command:', cmdError);
-                if (cmdError.message.includes('Session closed') || cmdError.message.includes('Target closed')) {
-                    await handleReconnect();
-                } else {
-                    await retryOperation(() => msg.reply('Maaf, terjadi kesalahan dalam memproses perintah. Silakan coba lagi.'), 3, 3000);
-                }
+                await msg.reply('Maaf, terjadi kesalahan dalam memproses perintah. Silakan coba lagi.');
             }
-            return;
-        }
-
-        // Handle !izin command separately
-        if (command === '!izin') {
-            console.log('Processing !izin command');
-            try {
-                // Send text first
-                await retryOperation(async () => {
-                    await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
-                }, 3, 3000);
-
-                // Wait longer before attempting sticker
-                await new Promise(resolve => setTimeout(resolve, 5000));
-
-                // Verify connection before sticker
-                if (!client.pupPage || !client.info) {
-                    await handleReconnect();
-                    return;
-                }
-
-                try {
-                    await client.pupPage.evaluate(() => true);
-                } catch (error) {
-                    await handleReconnect();
-                    return;
-                }
-
-                const stickerPath = path.join(__dirname, 'public', 'assets', 'stickers', 'izin.jpeg');
-                await sendStickerFromFile(msg, stickerPath);
-                
-                // Wait after sticker
-                await new Promise(resolve => setTimeout(resolve, 5000));
-            } catch (error) {
-                console.error('Error in !izin command:', error);
-                if (error.message.includes('Session closed') || error.message.includes('Target closed')) {
-                    await handleReconnect();
-                }
-            }
-            return;
         }
     } catch (error) {
         console.error('Critical error in message handler:', error);
-        if (error.message.includes('Session closed') || error.message.includes('Target closed')) {
-            await handleReconnect();
-        }
     }
 });
 
@@ -1043,10 +807,75 @@ app.get('/login', (req, res) => {
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0';
 
+// Initialize the client
+async function initializeClient() {
+    try {
+        console.log('Starting WhatsApp client initialization...');
+        
+        // Ensure sessions directory exists
+        const sessionsPath = '/app/sessions';
+        try {
+            await fs.access(sessionsPath);
+            console.log('Sessions directory exists');
+        } catch (error) {
+            console.log('Creating sessions directory...');
+            await fs.mkdir(sessionsPath, { recursive: true });
+        }
+
+        // Ensure store directory exists
+        const storePath = '/app/sessions/.store';
+        try {
+            await fs.access(storePath);
+            console.log('Store directory exists');
+        } catch (error) {
+            console.log('Creating store directory...');
+            await fs.mkdir(storePath, { recursive: true });
+        }
+
+        // Initialize the client with retry logic
+        let initAttempts = 0;
+        const maxInitAttempts = 3;
+
+        while (initAttempts < maxInitAttempts) {
+            try {
+                console.log(`Attempting to initialize client (attempt ${initAttempts + 1}/${maxInitAttempts})...`);
+                await client.initialize();
+                console.log('Client initialized successfully');
+                break;
+            } catch (initError) {
+                initAttempts++;
+                console.error(`Initialization attempt ${initAttempts} failed:`, initError);
+
+                if (initAttempts === maxInitAttempts) {
+                    throw initError;
+                }
+
+                // Only clear data if we haven't authenticated yet and no existing session
+                if (!botState.isAuthenticated && !botState.sessionExists) {
+                    console.log('No valid session found, clearing browser data...');
+                    try {
+                        const browserDataPath = path.join(sessionsPath, 'bot-whatsapp/Default');
+                        await fs.rm(browserDataPath, { recursive: true, force: true }).catch(() => {});
+                        console.log('Cleared browser data');
+                    } catch (error) {
+                        console.error('Error clearing browser data:', error);
+                    }
+                }
+
+                // Wait before retrying
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+        }
+    } catch (error) {
+        console.error('Failed to initialize client:', error);
+        throw error;
+    }
+}
+
 // Add reconnection handler
 async function handleReconnect() {
     const MAX_RECONNECT_ATTEMPTS = 5;
-    const RECONNECT_INTERVAL = 60000; // Increased to 60 seconds
+    const RECONNECT_INTERVAL = 60000; // 1 minute
 
     if (!botState.reconnectAttempts) {
         botState.reconnectAttempts = 0;
@@ -1061,58 +890,43 @@ async function handleReconnect() {
     console.log(`Attempting to reconnect (attempt ${botState.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
 
     try {
-        // Clean up existing browser/page with timeout
-        const cleanup = async () => {
-            if (client.pupPage) {
-                await Promise.race([
-                    client.pupPage.close().catch(() => {}),
-                    new Promise(resolve => setTimeout(resolve, 10000))
-                ]);
-            }
-            if (client.pupBrowser) {
-                await Promise.race([
-                    client.pupBrowser.close().catch(() => {}),
-                    new Promise(resolve => setTimeout(resolve, 10000))
-                ]);
-            }
-            await Promise.race([
-                client.destroy(),
-                new Promise(resolve => setTimeout(resolve, 10000))
-            ]);
-        };
-
-        await cleanup();
+        await client.destroy();
         console.log('Previous client instance destroyed');
+    } catch (error) {
+        console.error('Error destroying previous client instance:', error);
+    }
 
-        // Wait longer before reconnecting
-        await new Promise(resolve => setTimeout(resolve, RECONNECT_INTERVAL));
+    // Wait before attempting to reconnect
+    await new Promise(resolve => setTimeout(resolve, RECONNECT_INTERVAL));
 
-        // Initialize new client with verification
+    try {
         await initializeClient();
-        
-        // Verify new connection with multiple checks
-        if (client.pupPage && client.info) {
-            try {
-                // Multiple verification attempts with longer delays
-                for (let i = 0; i < 3; i++) {
-                    await client.pupPage.evaluate(() => true);
-                    await new Promise(resolve => setTimeout(resolve, 5000));
-                }
-                
-                botState.reconnectAttempts = 0;
-                botState.isReady = true;
-                console.log('Reconnection successful, session restored');
-            } catch (error) {
-                throw new Error('Failed to verify new connection');
-            }
-        } else {
-            throw new Error('Client not properly initialized');
+        if (botState.isAuthenticated) {
+            botState.reconnectAttempts = 0; // Reset counter on successful reconnection
         }
     } catch (error) {
         console.error('Reconnection attempt failed:', error);
-        // Add longer delay before recursive call
-        await new Promise(resolve => setTimeout(resolve, 30000));
         await handleReconnect();
+    }
+}
+
+// Update the startBot function
+async function startBot() {
+    try {
+        // Check if sessions directory exists and has content
+        const sessionsPath = '/app/sessions';
+        try {
+            await fs.access(path.join(sessionsPath, 'bot-whatsapp'));
+            botState.sessionExists = true;
+            console.log('Existing session found');
+        } catch (error) {
+            console.log('No existing session found');
+        }
+
+        await initializeClient();
+    } catch (error) {
+        console.error('Error starting bot:', error);
+        process.exit(1);
     }
 }
 

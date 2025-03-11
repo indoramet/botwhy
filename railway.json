@@ -2,23 +2,13 @@
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
     "builder": "DOCKERFILE",
-    "dockerfilePath": "Dockerfile",
-    "buildCommand": "docker build -t whatsapp-bot ."
+    "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "/app/start.sh",
+    "startCommand": "npm start",
     "healthcheckPath": "/health",
-    "healthcheckTimeout": 600,
-    "healthcheckInterval": 30,
+    "healthcheckTimeout": 100,
     "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 10,
-    "numReplicas": 1,
-    "sleepApplication": false,
-    "healthcheckEnabled": true,
-    "startupTimeout": 600,
-    "startupProbe": {
-      "failureThreshold": 30,
-      "periodSeconds": 10
-    }
+    "restartPolicyMaxRetries": 10
   }
 } 
