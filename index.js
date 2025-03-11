@@ -300,77 +300,43 @@ const client = new Client({
             '--disable-dev-shm-usage',
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
+            '--no-zygote',
+            '--single-process',
             '--disable-gpu',
             '--disable-extensions',
-            '--disable-web-security',
-            '--disable-features=site-per-process,IsolateOrigins',
-            '--window-size=800,600',
-            '--single-process',
-            '--no-zygote',
-            '--disable-features=AudioServiceOutOfProcess',
-            '--disable-features=IsolateOrigins,site-per-process',
             '--disable-software-rasterizer',
-            '--ignore-certificate-errors',
-            '--ignore-certificate-errors-spki-list',
-            '--disable-infobars',
-            '--disable-notifications',
-            '--use-gl=disabled',
-            '--disable-setuid-sandbox',
-            '--no-zygote',
-            '--deterministic-fetch',
-            '--disable-features=IsolateOrigins',
             '--disable-features=site-per-process',
-            '--disable-blink-features=AutomationControlled',
-            '--disable-sync',
-            '--disable-background-networking',
-            '--disable-default-apps',
-            '--disable-translate',
-            '--disable-component-extensions-with-background-pages',
-            '--disable-background-timer-throttling',
-            '--disable-renderer-backgrounding',
-            '--disable-backgrounding-occluded-windows',
-            '--disable-ipc-flooding-protection',
-            '--enable-features=NetworkService,NetworkServiceInProcess',
-            '--force-color-profile=srgb',
-            '--disable-features=Translate',
-            '--disable-features=GlobalMediaControls',
-            '--disable-crash-reporter',
-            '--disable-breakpad',
-            '--disable-canvas-aa',
-            '--disable-2d-canvas-clip-aa',
-            '--disable-gl-drawing-for-tests'
+            '--disable-dev-shm-usage',
+            '--disable-web-security',
+            '--disable-features=IsolateOrigins,site-per-process',
+            '--window-size=1280,720'
         ],
         defaultViewport: {
-            width: 800,
-            height: 600,
+            width: 1280,
+            height: 720,
             deviceScaleFactor: 1,
             hasTouch: false,
             isLandscape: true,
             isMobile: false
         },
-        executablePath: '/usr/bin/chromium',
+        executablePath: process.env.CHROME_BIN || '/usr/bin/chromium',
         browserWSEndpoint: null,
         ignoreHTTPSErrors: true,
-        timeout: 0,
-        protocolTimeout: 0,
-        waitForInitialPage: true,
-        handleSIGINT: false,
-        handleSIGTERM: false,
-        handleSIGHUP: false
+        timeout: 60000,
+        protocolTimeout: 60000
     },
     webVersion: '2.2408.52',
     webVersionCache: {
         type: 'none'
     },
-    restartOnAuthFail: false,
-    qrMaxRetries: 0,
-    authTimeoutMs: 0,
-    qrTimeoutMs: 0,
+    restartOnAuthFail: true,
+    qrMaxRetries: 3,
+    authTimeoutMs: 60000,
+    qrTimeoutMs: 60000,
     takeoverOnConflict: true,
     takeoverTimeoutMs: 0,
     bypassCSP: true,
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    linkPreviewApiServers: ['https://preview.whatsapp.com/api/v1/preview']
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
 });
 
 // Track bot state
@@ -465,33 +431,40 @@ client.on('ready', async () => {
     
     try {
         // Add longer delay before loading chats
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        await new Promise(resolve => setTimeout(resolve, 10000));
         
         // Wrap chat loading in retry logic
         let retries = 0;
-        const maxRetries = 3;
+        const maxRetries = 5;
         
         while (retries < maxRetries) {
             try {
+                await new Promise(resolve => setTimeout(resolve, 5000 * (retries + 1))); // Exponential backoff
                 const chats = await client.getChats();
-                console.log(`Loaded ${chats.length} chats`);
+                console.log(`Loaded ${chats.length} chats successfully`);
                 io.emit('ready');
                 break;
             } catch (error) {
                 retries++;
                 console.error(`Error loading chats (attempt ${retries}/${maxRetries}):`, error);
+                
                 if (retries === maxRetries) {
-                    console.log('Failed to load chats, but continuing with bot operation');
-                    io.emit('ready');
-                } else {
-                    await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds before retry
+                    console.log('Failed to load chats after all retries, attempting to reinitialize...');
+                    try {
+                        await client.initialize();
+                        const chats = await client.getChats();
+                        console.log(`Reinitialized and loaded ${chats.length} chats`);
+                        io.emit('ready');
+                    } catch (reinitError) {
+                        console.error('Failed to reinitialize:', reinitError);
+                        io.emit('ready'); // Continue anyway
+                    }
                 }
             }
         }
     } catch (error) {
         console.error('Error in ready event:', error);
-        // Don't throw the error, just log it and continue
-        io.emit('ready');
+        io.emit('ready'); // Continue anyway
     }
 });
 
