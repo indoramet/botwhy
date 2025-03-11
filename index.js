@@ -434,15 +434,37 @@ client.on('authenticated', async () => {
     botState.lastQR = null;
     io.emit('authenticated');
     
-    // Force a quick reconnection after authentication
+    // Force a quick reconnection after authentication with timeout
     try {
         console.log('Forcing reconnection to ensure message listener is attached...');
+        const reconnectTimeout = setTimeout(() => {
+            console.log('Reconnection timed out, proceeding with initialization...');
+            client.initialize().catch(console.error);
+        }, 30000); // 30 second timeout
+
         await client.destroy();
         await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        // Clear timeout if we get here
+        clearTimeout(reconnectTimeout);
+        
+        console.log('Starting reinitialize after destroy...');
         await client.initialize();
         console.log('Reconnection successful');
     } catch (error) {
         console.error('Error during forced reconnection:', error);
+        // If reconnection fails, try one more time with clean session
+        try {
+            console.log('Attempting clean session reconnect...');
+            await client.destroy();
+            const sessionsPath = './sessions';
+            await fs.rm(sessionsPath, { recursive: true, force: true });
+            await fs.mkdir(sessionsPath, { recursive: true });
+            await client.initialize();
+        } catch (finalError) {
+            console.error('Final reconnection attempt failed:', finalError);
+            process.exit(1); // Force process restart
+        }
     }
 });
 
@@ -451,8 +473,15 @@ client.on('ready', async () => {
     botState.isReady = true;
     botState.isAuthenticated = true;
     botState.lastQR = null;
+    botState.reconnectAttempts = 0; // Reset reconnect attempts on ready
     
     try {
+        // Add timeout for chat loading
+        const chatLoadTimeout = setTimeout(() => {
+            console.log('Chat loading timed out, emitting ready anyway');
+            io.emit('ready');
+        }, 30000); // 30 second timeout
+        
         // Add longer delay before loading chats
         await new Promise(resolve => setTimeout(resolve, 10000));
         
@@ -465,6 +494,7 @@ client.on('ready', async () => {
                 await new Promise(resolve => setTimeout(resolve, 5000 * (retries + 1))); // Exponential backoff
                 const chats = await client.getChats();
                 console.log(`Loaded ${chats.length} chats successfully`);
+                clearTimeout(chatLoadTimeout); // Clear timeout on success
                 io.emit('ready');
                 break;
             } catch (error) {
@@ -472,16 +502,9 @@ client.on('ready', async () => {
                 console.error(`Error loading chats (attempt ${retries}/${maxRetries}):`, error);
                 
                 if (retries === maxRetries) {
-                    console.log('Failed to load chats after all retries, attempting to reinitialize...');
-                    try {
-                        await client.initialize();
-                        const chats = await client.getChats();
-                        console.log(`Reinitialized and loaded ${chats.length} chats`);
-                        io.emit('ready');
-                    } catch (reinitError) {
-                        console.error('Failed to reinitialize:', reinitError);
-                        io.emit('ready'); // Continue anyway
-                    }
+                    console.log('Failed to load chats after all retries, proceeding anyway...');
+                    clearTimeout(chatLoadTimeout);
+                    io.emit('ready');
                 }
             }
         }
