@@ -347,28 +347,30 @@ const client = new Client({
             '--disable-javascript-harmony-shipping',
             '--disable-hang-monitor',
             '--force-color-profile=srgb',
-            '--window-size=1280,720'
+            '--disable-component-extensions-with-background-pages',
+            '--disable-default-apps',
+            '--disable-domain-reliability',
+            '--disable-client-side-phishing-detection',
+            '--window-size=800,600'
         ],
         defaultViewport: {
-            width: 1280,
-            height: 720,
+            width: 800,
+            height: 600,
             deviceScaleFactor: 1
         },
         executablePath: process.env.CHROME_BIN || '/usr/bin/chromium',
         ignoreHTTPSErrors: true,
-        timeout: 180000,
-        protocolTimeout: 180000,
-        waitForInitialPage: true
+        timeout: 0,
+        protocolTimeout: 0
     },
     webVersion: '2.2204.13',
-    restartOnAuthFail: false,
-    qrMaxRetries: 3,
-    authTimeoutMs: 180000,
-    qrTimeoutMs: 180000,
+    restartOnAuthFail: true,
+    qrMaxRetries: 5,
+    authTimeoutMs: 0,
+    qrTimeoutMs: 0,
     takeoverOnConflict: false,
-    takeoverTimeoutMs: 180000,
-    bypassCSP: true,
-    linkPreviewImageThumbnailWidth: 192
+    takeoverTimeoutMs: 0,
+    bypassCSP: true
 });
 
 // Track bot state
@@ -1081,21 +1083,45 @@ async function initializeClient() {
         // Initialize the client with retry logic
         let initAttempts = 0;
         const maxInitAttempts = 3;
+        let qrReceived = false;
 
         while (initAttempts < maxInitAttempts) {
             try {
                 console.log(`Attempting to initialize client (attempt ${initAttempts + 1}/${maxInitAttempts})...`);
                 
-                // Ensure clean environment before each attempt
-                global.gc && global.gc();
+                // Set up QR event handler before initialization
+                const qrPromise = new Promise(resolve => {
+                    const qrHandler = async (qr) => {
+                        console.log('QR Code received');
+                        qrReceived = true;
+                        try {
+                            const qrImage = await QRCode.toDataURL(qr);
+                            botState.lastQR = `<img src="${qrImage}" alt="QR Code" />`;
+                            io.emit('qr', botState.lastQR);
+                            console.log('QR code emitted to client');
+                            resolve();
+                        } catch (err) {
+                            console.error('Error generating QR code:', err);
+                        }
+                    };
+                    client.once('qr', qrHandler);
+                });
+
+                // Start initialization
+                const initPromise = client.initialize();
                 
-                // Initialize with timeout wrapper
+                // Wait for either QR code or successful initialization
                 await Promise.race([
-                    client.initialize(),
-                    new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('Manual timeout after 3 minutes')), 180000)
-                    )
+                    initPromise,
+                    qrPromise,
+                    // No timeout here - we'll wait for QR or success
                 ]);
+                
+                if (qrReceived) {
+                    console.log('QR code has been generated and emitted');
+                    // Wait for authentication indefinitely
+                    await initPromise;
+                }
                 
                 console.log('Client initialized successfully');
                 break;
@@ -1114,9 +1140,9 @@ async function initializeClient() {
                     await fs.mkdir(sessionsPath, { recursive: true });
                     console.log('Reset sessions for retry');
                     
-                    // Wait longer between retries
-                    console.log('Waiting 30 seconds before next attempt...');
-                    await new Promise(resolve => setTimeout(resolve, 30000));
+                    // Wait between retries
+                    console.log('Waiting 10 seconds before next attempt...');
+                    await new Promise(resolve => setTimeout(resolve, 10000));
                 } catch (error) {
                     console.warn('Warning during retry cleanup:', error.message);
                 }
