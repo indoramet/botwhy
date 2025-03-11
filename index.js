@@ -558,13 +558,55 @@ client.on('qr', async (qr) => {
         console.log('QR received while authenticated, ignoring...');
         return;
     }
-    console.log('QR RECEIVED');
+    
+    console.log('\n=== New QR Code Generated ===');
+    console.log('Timestamp:', new Date().toISOString());
+    
     try {
-        const qrImage = await QRCode.toDataURL(qr);
-        botState.lastQR = `<img src="${qrImage}" alt="QR Code" />`;
+        // Clear any existing QR code first
+        botState.lastQR = null;
+        
+        // Generate new QR code
+        const qrImage = await QRCode.toDataURL(qr, {
+            errorCorrectionLevel: 'H',
+            margin: 4,
+            scale: 8,
+            color: {
+                dark: '#000000',
+                light: '#ffffff'
+            }
+        });
+        
+        botState.lastQR = `<img src="${qrImage}" alt="QR Code" style="max-width: 300px; margin: 20px auto;" />
+            <p style="color: #666; margin-top: 10px;">Scan QR code ini dengan WhatsApp Anda.<br>QR code akan diperbarui setiap 20 detik.</p>`;
+        
         io.emit('qr', botState.lastQR);
+        console.log('New QR code generated and sent to client');
+        
+        // Set up automatic regeneration if not scanned
+        setTimeout(async () => {
+            if (!botState.isAuthenticated) {
+                console.log('QR code expired, attempting to regenerate...');
+                try {
+                    // Destroy and reinitialize client to force new QR generation
+                    await client.destroy();
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    await client.initialize();
+                } catch (error) {
+                    console.error('Error regenerating QR code:', error);
+                }
+            }
+        }, 20000); // 20 seconds timeout
     } catch (err) {
         console.error('Error generating QR code:', err);
+        // Try to recover by reinitializing
+        try {
+            await client.destroy();
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            await client.initialize();
+        } catch (reinitError) {
+            console.error('Failed to recover from QR generation error:', reinitError);
+        }
     }
 });
 
@@ -1006,7 +1048,46 @@ client.on('loading_screen', (percent, message) => {
     console.log('\n=== Loading Screen Update ===');
     console.log('Progress:', percent + '%');
     console.log('Message:', message);
+    
+    // Add more descriptive status messages
+    let statusMessage = 'Menghubungkan ke WhatsApp...';
+    if (percent > 0) {
+        statusMessage = `Menghubungkan ke WhatsApp (${percent}%)`;
+        if (percent === 100) {
+            statusMessage = 'Hampir selesai...';
+        }
+    }
+    
+    io.emit('status', {
+        percent,
+        message: statusMessage
+    });
+    
     console.log('==========================\n');
+});
+
+// Add connection failure handler
+client.on('auth_failure', async (msg) => {
+    console.log('\n=== Authentication Failed ===');
+    console.error('Auth failure reason:', msg);
+    
+    botState.isAuthenticated = false;
+    botState.isReady = false;
+    
+    // Clear session and retry
+    try {
+        await client.destroy();
+        const sessionsPath = '/app/sessions';
+        await fs.rm(sessionsPath, { recursive: true, force: true }).catch(() => {});
+        
+        // Wait before reinitializing
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        console.log('Retrying authentication...');
+        await initializeClient();
+    } catch (error) {
+        console.error('Failed to recover from auth failure:', error);
+    }
 });
 
 // Handle unexpected errors
@@ -1032,7 +1113,8 @@ const HOST = '0.0.0.0';
 // Initialize the client
 async function initializeClient() {
     try {
-        console.log('Starting WhatsApp client initialization...');
+        console.log('\n=== Starting WhatsApp Client Initialization ===');
+        console.log('Time:', new Date().toISOString());
         
         // Reset state before initialization
         botState.isReady = false;
@@ -1046,18 +1128,20 @@ async function initializeClient() {
             console.log('No existing client to destroy');
         }
         
-        // Clean up session directories
+        // Ensure clean session directory
         const sessionsPath = '/app/sessions';
-        
         try {
-            // Ensure directories exist
+            // Remove existing session if authentication failed
+            if (!botState.isAuthenticated) {
+                await fs.rm(sessionsPath, { recursive: true, force: true }).catch(() => {});
+            }
+            
+            // Create fresh directories
             await fs.mkdir(sessionsPath, { recursive: true });
             await fs.mkdir(path.join(sessionsPath, '.store'), { recursive: true });
-            
-            // Set proper permissions
             await fs.chmod(sessionsPath, 0o777).catch(() => {});
         } catch (error) {
-            console.error('Error during directory setup:', error);
+            console.error('Error preparing session directory:', error);
         }
         
         // Initialize with retry logic
@@ -1066,12 +1150,9 @@ async function initializeClient() {
         
         while (initAttempts < maxInitAttempts) {
             try {
-                console.log(`Attempting to initialize client (attempt ${initAttempts + 1}/${maxInitAttempts})...`);
-                
-                // Wait before initialization
+                console.log(`\nInitialization attempt ${initAttempts + 1}/${maxInitAttempts}`);
                 await new Promise(resolve => setTimeout(resolve, 2000));
                 
-                // Initialize client
                 await client.initialize();
                 
                 // Wait for client to be ready
@@ -1088,7 +1169,6 @@ async function initializeClient() {
                 
                 await readyPromise;
                 
-                // Start health monitoring
                 lastHeartbeat = Date.now();
                 isClientHealthy = true;
                 
@@ -1102,7 +1182,6 @@ async function initializeClient() {
                     throw error;
                 }
                 
-                // Wait before retry
                 await new Promise(resolve => setTimeout(resolve, 5000));
             }
         }
