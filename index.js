@@ -459,6 +459,7 @@ const client = new Client({
 });
     
 let isClientReady = false;
+let isAuthenticated = false;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_INTERVAL = 60000; // 1 minute
@@ -487,17 +488,14 @@ async function initializeClient() {
             await fs.mkdir(storePath, { recursive: true });
         }
         
-        // Only clear browser data if initialization fails
-        let shouldClearData = false;
-        
         try {
             console.log('Attempting to initialize client...');
             await client.initialize();
         } catch (initError) {
             console.error('Initial initialization failed:', initError);
-            shouldClearData = true;
             
-            if (shouldClearData) {
+            // Only clear data if we haven't authenticated yet
+            if (!isAuthenticated) {
                 console.log('Clearing browser data for fresh start...');
                 try {
                     const browserDataPath = path.join(sessionsPath, 'bot-whatsapp/Default');
@@ -511,12 +509,14 @@ async function initializeClient() {
                     console.error('Error during data cleanup or reinitialization:', error);
                     throw error;
                 }
+            } else {
+                throw initError;
             }
         }
         
         // Add a timeout to restart if stuck in connecting state
         setTimeout(async () => {
-            if (!isClientReady) {
+            if (!isClientReady && !isAuthenticated) {
                 console.log('Client stuck in connecting state, attempting restart...');
                 try {
                     await client.destroy();
@@ -527,7 +527,7 @@ async function initializeClient() {
                 console.log('Exiting process for container restart...');
                 process.exit(1);
             }
-        }, 300000); // Increased to 300 seconds (5 minutes) timeout
+        }, 300000); // 5 minutes timeout
     } catch (error) {
         console.error('Failed to initialize client:', error);
         if (error.message.includes('Failed to launch') || 
@@ -567,21 +567,55 @@ async function handleReconnect() {
     }, RECONNECT_INTERVAL);
 }
 
-client.on('ready', () => {
+client.on('qr', async (qr) => {
+    if (isAuthenticated) {
+        console.log('QR received while authenticated, ignoring...');
+        return;
+    }
+    console.log('QR RECEIVED');
+    try {
+        const qrImage = await QRCode.toDataURL(qr);
+        io.emit('qr', `<img src="${qrImage}" alt="QR Code" />`);
+    } catch (err) {
+        console.error('Error generating QR code:', err);
+    }
+});
+
+client.on('authenticated', () => {
+    console.log('Client authenticated');
+    isAuthenticated = true;
+    reconnectAttempts = 0;
+    io.emit('authenticated');
+});
+
+client.on('ready', async () => {
     console.log('Client is ready');
     isClientReady = true;
-    reconnectAttempts = 0; // Reset reconnect attempts on ready
+    isAuthenticated = true;
+    reconnectAttempts = 0;
+    
+    try {
+        // Add delay before loading chats
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        const chats = await client.getChats();
+        console.log(`Loaded ${chats.length} chats`);
+        io.emit('ready');
+    } catch (error) {
+        console.error('Error in ready event:', error);
+    }
 });
 
 client.on('disconnected', async (reason) => {
     console.log('Client disconnected:', reason);
     isClientReady = false;
+    // Don't reset authentication state here
     await handleReconnect();
 });
 
 client.on('auth_failure', async () => {
     console.log('Auth failure, attempting to reconnect...');
     isClientReady = false;
+    isAuthenticated = false; // Reset authentication state only on auth failure
     await handleReconnect();
 });
 
@@ -650,21 +684,6 @@ io.on('connection', (socket) => {
     });
 
     activeSocket = socket;
-});
-
-client.on('qr', async (qr) => {
-    console.log('QR RECEIVED');
-    try {
-        const qrImage = await QRCode.toDataURL(qr);
-        io.emit('qr', `<img src="${qrImage}" alt="QR Code" />`);
-    } catch (err) {
-        console.error('Error generating QR code:', err);
-    }
-});
-
-client.on('authenticated', () => {
-    console.log('Client authenticated');
-    reconnectAttempts = 0; // Reset reconnect attempts on successful authentication
 });
 
 const lastUserMessage = new Map();
