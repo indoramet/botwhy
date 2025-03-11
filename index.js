@@ -434,8 +434,8 @@ client.on('authenticated', async () => {
     botState.lastQR = null;
     io.emit('authenticated');
     
-    // Instead of forcing reconnection, wait for ready event
-    console.log('Waiting for client to be ready...');
+    // Don't wait for ready event, just proceed
+    console.log('Authentication successful, proceeding with initialization...');
 });
 
 client.on('ready', async () => {
@@ -447,42 +447,21 @@ client.on('ready', async () => {
     io.emit('ready');
     
     try {
-        // Verify connection is stable
-        const chats = await client.getChats();
-        console.log(`Loaded ${chats.length} chats successfully`);
-        
-        // Start the ping/pong interval only after successful ready state
+        // Start the connection check immediately
         startConnectionCheck();
+        
+        // Try to load chats but don't wait for it
+        client.getChats().then(chats => {
+            console.log(`Loaded ${chats.length} chats successfully`);
+        }).catch(error => {
+            console.error('Error loading initial chats:', error);
+        });
     } catch (error) {
-        console.error('Error loading initial chats:', error);
-        // Continue anyway as the connection might still be usable
+        console.error('Error in ready event:', error);
     }
 });
 
-// Separate the connection check into its own function
-function startConnectionCheck() {
-    // Clear any existing interval
-    if (global.pingInterval) {
-        clearInterval(global.pingInterval);
-    }
-    
-    global.pingInterval = setInterval(async () => {
-        if (botState.isAuthenticated && client.pupPage) {
-            try {
-                await client.pupPage.evaluate(() => navigator.onLine);
-                botState.lastPing = Date.now();
-                console.log('Connection check: OK');
-            } catch (error) {
-                console.log('Connection check failed, attempting to reconnect...');
-                if (Date.now() - botState.lastPing > 30000) { // 30 seconds without successful ping
-                    await handleReconnect();
-                }
-            }
-        }
-    }, 20000); // Check every 20 seconds
-}
-
-// Update handleReconnect to be more cautious
+// Update handleReconnect to be more resilient
 async function handleReconnect() {
     const MAX_RECONNECT_ATTEMPTS = 5;
     const RECONNECT_INTERVAL = 30000; // 30 seconds
@@ -519,19 +498,28 @@ async function handleReconnect() {
             }
         }
 
-        // Attempt to initialize the client
+        // Initialize with a shorter timeout
         await client.initialize();
         
-        // Wait for ready state
+        // Set a flag to track if we've received either authenticated or ready event
+        let connectionEstablished = false;
+        
+        // Wait for either authenticated or ready event
         await new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
-                reject(new Error('Ready state timeout'));
-            }, 60000); // 60 second timeout
+                if (!connectionEstablished) {
+                    reject(new Error('Connection timeout'));
+                }
+            }, 30000); // 30 second timeout
 
-            client.once('ready', () => {
+            const handleEvent = () => {
+                connectionEstablished = true;
                 clearTimeout(timeout);
                 resolve();
-            });
+            };
+
+            client.once('authenticated', handleEvent);
+            client.once('ready', handleEvent);
         });
         
         // If we get here, the connection was successful
@@ -544,6 +532,35 @@ async function handleReconnect() {
         await new Promise(resolve => setTimeout(resolve, 5000));
         await handleReconnect();
     }
+}
+
+// Update the connection check function
+function startConnectionCheck() {
+    // Clear any existing interval
+    if (global.pingInterval) {
+        clearInterval(global.pingInterval);
+    }
+    
+    global.pingInterval = setInterval(async () => {
+        if (!botState.isAuthenticated) {
+            console.log('Not authenticated, skipping connection check');
+            return;
+        }
+        
+        try {
+            if (!client.pupPage) {
+                throw new Error('No pupPage available');
+            }
+            await client.pupPage.evaluate(() => navigator.onLine);
+            botState.lastPing = Date.now();
+            console.log('Connection check: OK');
+        } catch (error) {
+            console.log('Connection check failed:', error.message);
+            if (Date.now() - botState.lastPing > 30000) { // 30 seconds without successful ping
+                await handleReconnect();
+            }
+        }
+    }, 20000); // Check every 20 seconds
 }
 
 client.on('disconnected', async (reason) => {
