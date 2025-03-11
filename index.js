@@ -145,40 +145,29 @@ async function handleAdminCommand(msg) {
     const sender = msg.from;
     
     if (!ADMIN_NUMBERS.includes(sender)) {
-        console.log('Non-admin user attempted admin command:', sender);
         return false;
     }
 
     const command = msg.body.toLowerCase();
     const parts = msg.body.split(' ');
 
-    console.log('Processing admin command:', command);
-    console.log('Command parts:', parts);
-
     if (command.startsWith('!update')) {
-        console.log('Update command detected');
-        
         if (parts.length < 3) {
-            await msg.reply('❌ Format: !update <command> <new value>');
+            await msg.reply('Format: !update <command_name> <new_value>\nExample: !update laporan1 https://example.com');
             return true;
         }
 
         const commandToUpdate = parts[1].toLowerCase();
         const newValue = parts.slice(2).join(' ');
         
-        console.log('Attempting to update command:', commandToUpdate);
-        console.log('New value:', newValue);
-        
         if (dynamicCommands.hasOwnProperty(commandToUpdate)) {
             const oldValue = dynamicCommands[commandToUpdate];
             dynamicCommands[commandToUpdate] = newValue;
-            await msg.reply(`✅ Command ${commandToUpdate} has been updated:\nOld: ${oldValue}\nNew: ${newValue}`);
-            console.log(`Successfully updated ${commandToUpdate} command`);
+            await msg.reply(`✅ Command *${commandToUpdate}* has been updated\n\nOld value:\n${oldValue}\n\nNew value:\n${newValue}`);
             return true;
         } else {
-            const availableCommands = Object.keys(dynamicCommands).join(', ');
-            await msg.reply(`❌ Invalid command name: ${commandToUpdate}\nAvailable commands: ${availableCommands}`);
-            console.log('Invalid command update attempt:', commandToUpdate);
+            const availableCommands = Object.keys(dynamicCommands).join('\n');
+            await msg.reply(`❌ Invalid command name: *${commandToUpdate}*\n\nAvailable commands:\n${availableCommands}`);
             return true;
         }
     }
@@ -240,17 +229,15 @@ async function handleAdminCommand(msg) {
     }
 
     // Show all current values
-    else if (command === '!showcommands') {
+    if (command === '!showcommands') {
         let response = '*Current Command Values:*\n\n';
         for (const [cmd, value] of Object.entries(dynamicCommands)) {
             response += `*${cmd}:* ${value}\n`;
         }
         await msg.reply(response);
-        console.log('Showing all command values');
         return true;
     }
 
-    console.log('No matching admin command found');
     return false;
 }
 
@@ -667,37 +654,36 @@ client.on('message', async msg => {
         }
 
         // Rate limiting check
-        const now = Date.now();
-        const lastTime = lastUserMessage.get(msg.from) || 0;
-        
-        if (now - lastTime < 2000) {
-            console.log('Rate limiting response to:', msg.from);
-            return;
-        }
+    const now = Date.now();
+    const lastTime = lastUserMessage.get(msg.from) || 0;
+    
+    if (now - lastTime < 2000) {
+        console.log('Rate limiting response to:', msg.from);
+        return;
+    }
 
-        lastUserMessage.set(msg.from, now);
+    lastUserMessage.set(msg.from, now);
 
-        if (activeSocket) {
-            activeSocket.emit('message', {
-                from: msg.from,
-                body: msg.body,
-                time: moment().format('HH:mm:ss')
-            });
-        }
-
-        const command = msg.body.toLowerCase();
-        console.log('Processing command:', command);
+    if (activeSocket) {
+        activeSocket.emit('message', {
+            from: msg.from,
+            body: msg.body,
+            time: moment().format('HH:mm:ss')
+        });
+    }
 
         // Check for admin commands first
-        const isAdminCommand = await handleAdminCommand(msg);
-        if (isAdminCommand) {
+        if (await handleAdminCommand(msg)) {
             console.log('Admin command handled');
             return;
-        }
+    }
 
-        // Process regular commands if not an admin command
+    const command = msg.body.toLowerCase();
+        console.log('Processing command:', command);
+
+        // Process commands for both private and group chats if they start with !
         if (command.startsWith('!')) {
-            console.log('Processing regular command in chat:', command);
+            console.log('Processing command in chat:', command);
             
             try {
                 if (command === '!izin') {
