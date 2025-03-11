@@ -609,12 +609,29 @@ const lastUserMessage = new Map();
 
 client.on('message', async msg => {
     try {
-        // Add debug logging
-        console.log('Message received:', {
+        // Immediate debug logging
+        console.log('=== NEW MESSAGE RECEIVED ===');
+        console.log('Raw message:', {
             from: msg.from,
+            to: msg.to,
             body: msg.body,
-            timestamp: new Date().toISOString()
+            hasMedia: msg.hasMedia,
+            timestamp: new Date().toISOString(),
+            type: msg._data.type,
+            isGroup: msg._data.isGroup
         });
+
+        // Check client state
+        if (!client.pupPage || !client.info) {
+            console.log('Client not fully initialized, attempting to recover...');
+            try {
+                await client.initialize();
+                console.log('Client reinitialized successfully');
+            } catch (error) {
+                console.error('Failed to reinitialize client:', error);
+                return;
+            }
+        }
 
         // Wait for client to be ready
         if (!botState.isReady) {
@@ -623,8 +640,18 @@ client.on('message', async msg => {
         }
 
         // Get chat before anything else
-        const chat = await msg.getChat();
-        console.log('Chat retrieved:', chat.name || chat.id);
+        let chat;
+        try {
+            chat = await msg.getChat();
+            console.log('Chat retrieved:', {
+                name: chat.name,
+                id: chat.id._serialized,
+                isGroup: chat.isGroup
+            });
+        } catch (chatError) {
+            console.error('Error getting chat:', chatError);
+            return;
+        }
         
         // Check if chat is muted
         if (chat.isMuted) {
@@ -651,26 +678,46 @@ client.on('message', async msg => {
             });
         }
 
-        // Check for admin commands first
-        if (await handleAdminCommand(msg)) {
-            console.log('Admin command handled');
-            return;
-        }
-
+        // Process the message
         const command = msg.body.toLowerCase();
         console.log('Processing command:', command);
 
-        // Process commands for both private and group chats if they start with !
-        if (command.startsWith('!') || command === 'kapan praktikum?' || command === 'nilai praktikum?' || 
-            command === 'sesi praktikum?' || command === 'bagaimana cara upload laporan?' ||
-            command === 'siapa yang membuat kamu?' || command === 'gimana saya mengontak anda?') {
+        // Check for admin commands first
+        if (ADMIN_NUMBERS.includes(msg.from)) {
+            console.log('Admin command check for:', msg.from);
+            if (await handleAdminCommand(msg)) {
+                console.log('Admin command handled successfully');
+                return;
+            }
+        }
+
+        // Process commands for both private and group chats
+        if (command.startsWith('!') || 
+            ['kapan praktikum?', 'nilai praktikum?', 'sesi praktikum?', 
+             'bagaimana cara upload laporan?', 'siapa yang membuat kamu?', 
+             'gimana saya mengontak anda?'].includes(command)) {
             
-            console.log('Processing command in chat:', command);
+            console.log('Valid command detected:', command);
             
             try {
                 let response = null;
 
-                if (command === '!izin') {
+                // Command processing with debug logging
+                console.log('Determining response for command:', command);
+                
+                if (command === '!help' || command === '!bantuan') {
+                    response = `Daftar perintah yang tersedia:
+!jadwal - Informasi jadwal praktikum
+!laporan - Cara upload laporan
+!sesi - Informasi sesi praktikum
+!nilai - Informasi nilai praktikum
+!izin - Informasi izin tidak hadir praktikum
+!asistensi - Informasi jadwal asistensi
+!software - Link download software praktikum
+!template - Link template laporan
+!tugasakhir - Informasi tugas akhir`;
+                }
+                else if (command === '!izin') {
                     response = 'Silahkan izin jika berkendala hadir, dimohon segera hubungi saya';
                 }
                 else if (command === '!software') {
@@ -709,28 +756,34 @@ client.on('message', async msg => {
                 else if (command === '!contact' || command === 'gimana saya mengontak anda?') {
                     response = 'you can visit my portofolio web app https://unlovdman.vercel.app/ for more information';
                 }
-                else if (command === '!help' || command === '!bantuan') {
-                    response = `Daftar perintah yang tersedia:
-!jadwal - Informasi jadwal praktikum
-!laporan - Cara upload laporan
-!sesi - Informasi sesi praktikum
-!nilai - Informasi nilai praktikum
-!izin - Informasi izin tidak hadir praktikum
-!asistensi - Informasi jadwal asistensi
-!software - Link download software praktikum
-!template - Link template laporan
-!tugasakhir - Informasi tugas akhir`;
-                }
 
                 if (response) {
-                    console.log('Sending response for command:', command);
-                    await msg.reply(response);
-                    console.log('Response sent successfully');
+                    console.log('Preparing to send response for command:', command);
+                    try {
+                        await msg.reply(response);
+                        console.log('Response sent successfully:', {
+                            command: command,
+                            responseLength: response.length
+                        });
+                    } catch (replyError) {
+                        console.error('Error sending reply:', replyError);
+                        // Try alternative send method
+                        await chat.sendMessage(response);
+                        console.log('Response sent via alternative method');
+                    }
+                } else {
+                    console.log('No response generated for command:', command);
                 }
             } catch (cmdError) {
                 console.error('Error executing command:', cmdError);
-                await msg.reply('Maaf, terjadi kesalahan dalam memproses perintah. Silakan coba lagi.');
+                try {
+                    await msg.reply('Maaf, terjadi kesalahan dalam memproses perintah. Silakan coba lagi.');
+                } catch (replyError) {
+                    console.error('Error sending error message:', replyError);
+                }
             }
+        } else {
+            console.log('Message not recognized as command:', command);
         }
     } catch (error) {
         console.error('Critical error in message handler:', error);
@@ -742,12 +795,51 @@ client.on('message', async msg => {
     }
 });
 
-client.on('change_state', state => {
-    console.log('Client state changed to:', state);
+// Add more event listeners for debugging
+client.on('message_ack', (msg, ack) => {
+    console.log('Message acknowledgement:', {
+        from: msg.from,
+        to: msg.to,
+        body: msg.body,
+        ack: ack
+    });
 });
 
-client.on('loading_screen', (percent, message) => {
-    console.log('Loading screen:', percent, message);
+client.on('message_create', async (msg) => {
+    console.log('Message create event:', {
+        fromMe: msg.fromMe,
+        from: msg.from,
+        to: msg.to,
+        body: msg.body,
+        hasMedia: msg.hasMedia,
+        timestamp: new Date().toISOString()
+    });
+});
+
+client.on('message_revoke_everyone', async (after, before) => {
+    console.log('Message revoked:', {
+        before: before ? before.body : null,
+        after: after.body
+    });
+});
+
+// Add state change logging
+client.on('change_state', state => {
+    console.log('Client state changed to:', state);
+    if (state === 'CONFLICT' || state === 'UNLAUNCHED') {
+        console.log('Problematic state detected, attempting to reconnect...');
+        handleReconnect();
+    }
+});
+
+// Add connection state logging
+client.on('disconnected', (reason) => {
+    console.log('Client disconnected:', reason);
+    botState.isReady = false;
+    if (reason === 'NAVIGATION' || reason === 'TIMEOUT') {
+        console.log('Disconnection due to navigation or timeout, attempting immediate reconnect...');
+        handleReconnect();
+    }
 });
 
 // Handle unexpected errors
@@ -859,15 +951,4 @@ async function startBot() {
 server.listen(PORT, HOST, () => {
     console.log(`Server running on http://${HOST}:${PORT}`);
     startBot();
-});
-
-// Add message received debug event
-client.on('message_create', async (msg) => {
-    console.log('Debug - Raw message event:', {
-        fromMe: msg.fromMe,
-        from: msg.from,
-        to: msg.to,
-        body: msg.body,
-        timestamp: new Date().toISOString()
-    });
 }); 
