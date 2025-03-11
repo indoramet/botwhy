@@ -456,8 +456,7 @@ const client = new Client({
             '--no-default-browser-check',
             '--no-experiments',
             '--no-pings',
-            '--password-store=basic',
-            '--user-data-dir=/tmp/puppeteer_dev_profile'
+            '--password-store=basic'
         ],
         defaultViewport: {
             width: 1280,
@@ -475,8 +474,7 @@ const client = new Client({
         waitForInitialPage: true,
         handleSIGINT: false,
         handleSIGTERM: false,
-        handleSIGHUP: false,
-        userDataDir: '/tmp/puppeteer_dev_profile'
+        handleSIGHUP: false
     },
     webVersion: '2.2408.52',
     webVersionCache: {
@@ -1050,23 +1048,16 @@ async function initializeClient() {
         
         // Clean up session directories
         const sessionsPath = '/app/sessions';
-        const tempProfilePath = '/tmp/puppeteer_dev_profile';
         
         try {
-            // Remove temporary profile directory
-            await fs.rm(tempProfilePath, { recursive: true, force: true }).catch(() => {});
-            // Remove SingletonLock file if it exists
-            await fs.rm(path.join(sessionsPath, 'session-bot-whatsapp/SingletonLock'), { force: true }).catch(() => {});
-            
             // Ensure directories exist
             await fs.mkdir(sessionsPath, { recursive: true });
             await fs.mkdir(path.join(sessionsPath, '.store'), { recursive: true });
-            await fs.mkdir(tempProfilePath, { recursive: true });
             
             // Set proper permissions
-            await fs.chmod(tempProfilePath, 0o777).catch(() => {});
+            await fs.chmod(sessionsPath, 0o777).catch(() => {});
         } catch (error) {
-            console.error('Error during directory cleanup:', error);
+            console.error('Error during directory setup:', error);
         }
         
         // Initialize with retry logic
@@ -1109,15 +1100,6 @@ async function initializeClient() {
                 
                 if (initAttempts === maxInitAttempts) {
                     throw error;
-                }
-                
-                // Clean up between attempts
-                try {
-                    await fs.rm(tempProfilePath, { recursive: true, force: true }).catch(() => {});
-                    await fs.mkdir(tempProfilePath, { recursive: true });
-                    await fs.chmod(tempProfilePath, 0o777).catch(() => {});
-                } catch (cleanupError) {
-                    console.error('Error during cleanup:', cleanupError);
                 }
                 
                 // Wait before retry
