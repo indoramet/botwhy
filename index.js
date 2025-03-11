@@ -336,16 +336,16 @@ const client = new Client({
         },
         executablePath: process.env.CHROME_BIN || '/usr/bin/chromium',
         ignoreHTTPSErrors: true,
-        timeout: 120000,
-        protocolTimeout: 120000
+        timeout: 60000,
+        protocolTimeout: 60000
     },
-    webVersion: '2.2318.11',
+    webVersion: '2.2245.9',
     restartOnAuthFail: true,
     qrMaxRetries: 5,
-    authTimeoutMs: 120000,
-    qrTimeoutMs: 120000,
+    authTimeoutMs: 60000,
+    qrTimeoutMs: 60000,
     takeoverOnConflict: true,
-    takeoverTimeoutMs: 120000,
+    takeoverTimeoutMs: 60000,
     bypassCSP: true
 });
 
@@ -434,22 +434,29 @@ client.on('qr', async (qr) => {
 client.on('authenticated', async () => {
     console.log('Client authenticated');
     botState.isAuthenticated = true;
-    botState.lastQR = null; // Clear QR code
+    botState.lastQR = null;
     io.emit('authenticated');
     
-    // Force clear any existing intervals
-    if (global.pingInterval) {
-        clearInterval(global.pingInterval);
-        global.pingInterval = null;
-    }
+    console.log('Authentication successful, proceeding with initialization...');
     
-    console.log('Authentication successful, waiting for full initialization...');
+    // Set a timeout for reaching ready state
+    const readyTimeout = setTimeout(async () => {
+        console.log('Ready state timeout reached, attempting recovery...');
+        await handleReconnect();
+    }, 30000);
     
-    // Wait a moment before proceeding
-    await new Promise(resolve => setTimeout(resolve, 5000));
+    client.once('ready', () => {
+        clearTimeout(readyTimeout);
+    });
     
-    // Initialize message handling
+    // Initialize message handling immediately
     console.log('Setting up message handlers...');
+    setupMessageHandlers();
+    console.log('Message handlers set up successfully');
+});
+
+// Separate function for message handlers setup
+function setupMessageHandlers() {
     client.on('message', async msg => {
         console.log('\n=== NEW MESSAGE RECEIVED ===');
         console.log('Message details:', {
@@ -457,53 +464,66 @@ client.on('authenticated', async () => {
             body: msg.body,
             timestamp: new Date().toISOString()
         });
-        
-        // Rest of message handling code...
+        // ... rest of the message handling code ...
     });
-    
-    console.log('Message handlers set up successfully');
-});
+}
 
 client.on('ready', async () => {
     console.log('Client is ready!');
     
     try {
-        // Set bot state immediately
         botState.isReady = true;
         botState.isAuthenticated = true;
         botState.reconnectAttempts = 0;
         io.emit('ready');
         
-        // Verify WhatsApp Web connection
+        // Verify WhatsApp Web connection with timeout
+        const connectionTimeout = setTimeout(() => {
+            console.log('Connection verification timeout, attempting recovery...');
+            handleReconnect();
+        }, 30000);
+        
         const page = client.pupPage;
         if (page) {
             console.log('Checking WhatsApp Web connection...');
             
-            // Wait for WhatsApp Web to be fully loaded
-            await page.waitForFunction(() => {
-                return window.Store && 
-                       window.Store.Msg && 
-                       window.Store.Wap && 
-                       window.Store.Stream && 
-                       window.Store.Conn;
-            }, { timeout: 30000 });
-            
-            console.log('WhatsApp Web fully loaded');
-            
-            // Send a test message
             try {
-                console.log('Sending test message...');
-                const chat = await client.getChatById('status@broadcast');
-                await chat.sendMessage('Bot is online and ready to receive messages.');
-                console.log('Test message sent successfully');
+                await page.evaluate(() => {
+                    return new Promise((resolve, reject) => {
+                        if (window.Store && 
+                            window.Store.Msg && 
+                            window.Store.Wap && 
+                            window.Store.Stream && 
+                            window.Store.Conn) {
+                            resolve(true);
+                        } else {
+                            reject(new Error('WhatsApp Web not fully initialized'));
+                        }
+                    });
+                });
+                
+                clearTimeout(connectionTimeout);
+                console.log('WhatsApp Web fully loaded');
+                
+                // Send a test message
+                try {
+                    console.log('Sending test message...');
+                    const chat = await client.getChatById('status@broadcast');
+                    await chat.sendMessage('Bot is online and ready to receive messages.');
+                    console.log('Test message sent successfully');
+                } catch (error) {
+                    console.error('Error sending test message:', error);
+                }
+                
+                // Start connection check
+                startConnectionCheck();
+                
             } catch (error) {
-                console.error('Error sending test message:', error);
+                console.error('Error verifying WhatsApp Web:', error);
+                clearTimeout(connectionTimeout);
+                await handleReconnect();
             }
         }
-        
-        // Start connection check
-        startConnectionCheck();
-        
     } catch (error) {
         console.error('Error in ready event:', error);
         await handleReconnect();
