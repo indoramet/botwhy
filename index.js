@@ -678,14 +678,30 @@ async function handleReconnect() {
     if (botState.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
         console.log('Max reconnection attempts reached, destroying client and clearing session...');
         try {
-            await client.destroy();
-            // Clear session data
+            // Destroy existing client
+            await client.destroy().catch(console.error);
+            
+            // Clear all session data
             const sessionsPath = '/app/sessions';
             await fs.rm(sessionsPath, { recursive: true, force: true }).catch(() => {});
+            
+            // Reset state
+            botState.isReady = false;
+            botState.isAuthenticated = false;
+            botState.lastQR = null;
+            botState.sessionExists = false;
+            botState.reconnectAttempts = 0;
+            isClientHealthy = false;
+            
             console.log('Client destroyed and session cleared');
-            process.exit(1); // Force restart
+            
+            // Wait before attempting fresh start
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            
+            // Attempt fresh initialization
+            return await initializeClient();
         } catch (error) {
-            console.error('Error during client cleanup:', error);
+            console.error('Critical error during cleanup:', error);
             process.exit(1);
         }
     }
@@ -694,41 +710,33 @@ async function handleReconnect() {
     console.log(`Attempting to reconnect (attempt ${botState.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
 
     try {
-        // First try to destroy the existing client
-        try {
-            await client.destroy();
+        // Destroy existing client if any
+        if (client.pupPage) {
+            console.log('Destroying previous client instance...');
+            await client.destroy().catch(console.error);
             console.log('Previous client instance destroyed');
-        } catch (error) {
-            console.error('Error destroying previous client instance:', error);
         }
 
-        // Wait before attempting to reconnect
+        // Wait before attempting reconnection
         console.log(`Waiting ${RECONNECT_INTERVAL/1000} seconds before reconnecting...`);
         await new Promise(resolve => setTimeout(resolve, RECONNECT_INTERVAL));
 
         // Initialize new client
         console.log('Initializing new client...');
-        await initializeClient();
+        const success = await initializeClient();
         
-        // Reset health monitoring
-        lastHeartbeat = Date.now();
-        isClientHealthy = true;
-        
-        // If we get here, reset the reconnect counter
-        if (client.info) {
+        if (success) {
             console.log('Reconnection successful!');
             botState.reconnectAttempts = 0;
-            botState.isReady = true;
-            botState.isAuthenticated = true;
             return true;
         }
+        
+        return false;
     } catch (error) {
         console.error('Reconnection attempt failed:', error);
         isClientHealthy = false;
-        // Try again recursively
         return await handleReconnect();
     }
-    return false;
 }
 
 // Monitor client health
@@ -1032,51 +1040,41 @@ async function initializeClient() {
     try {
         console.log('Starting WhatsApp client initialization...');
         
-        // Ensure sessions directory exists
+        // Reset state before initialization
+        botState.isReady = false;
+        botState.isAuthenticated = false;
+        isClientHealthy = false;
+        
+        // Ensure directories exist
         const sessionsPath = '/app/sessions';
-        try {
-            await fs.access(sessionsPath);
-            console.log('Sessions directory exists');
-        } catch (error) {
-            console.log('Creating sessions directory...');
-            await fs.mkdir(sessionsPath, { recursive: true });
-        }
-
-        // Ensure store directory exists
         const storePath = '/app/sessions/.store';
-        try {
-            await fs.access(storePath);
-            console.log('Store directory exists');
-        } catch (error) {
-            console.log('Creating store directory...');
-            await fs.mkdir(storePath, { recursive: true });
-        }
-
-        // Initialize the client with retry logic
+        await fs.mkdir(sessionsPath, { recursive: true });
+        await fs.mkdir(storePath, { recursive: true });
+        
+        // Initialize with retry logic
         let initAttempts = 0;
         const maxInitAttempts = 3;
-
+        
         while (initAttempts < maxInitAttempts) {
             try {
                 console.log(`Attempting to initialize client (attempt ${initAttempts + 1}/${maxInitAttempts})...`);
                 
-                // Reset client state before initialization
-                botState.isReady = false;
-                botState.isAuthenticated = false;
-                isClientHealthy = false;
+                // Destroy existing client if any
+                if (client.pupPage) {
+                    await client.destroy().catch(console.error);
+                }
                 
+                // Wait before initialization
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                // Initialize client
                 await client.initialize();
-                console.log('Client initialized successfully');
-                
-                // Start health monitoring
-                lastHeartbeat = Date.now();
-                isClientHealthy = true;
                 
                 // Wait for client to be ready
-                await new Promise((resolve, reject) => {
+                const readyPromise = new Promise((resolve, reject) => {
                     const timeout = setTimeout(() => {
                         reject(new Error('Client initialization timeout'));
-                    }, 60000); // 60 second timeout
+                    }, 60000);
                     
                     client.once('ready', () => {
                         clearTimeout(timeout);
@@ -1084,28 +1082,32 @@ async function initializeClient() {
                     });
                 });
                 
-                break;
-            } catch (initError) {
+                await readyPromise;
+                
+                // Start health monitoring
+                lastHeartbeat = Date.now();
+                isClientHealthy = true;
+                
+                console.log('Client initialized successfully');
+                return true;
+            } catch (error) {
                 initAttempts++;
-                console.error(`Initialization attempt ${initAttempts} failed:`, initError);
-
+                console.error(`Initialization attempt ${initAttempts} failed:`, error);
+                
                 if (initAttempts === maxInitAttempts) {
-                    throw initError;
+                    throw error;
                 }
-
-                // Only clear data if we haven't authenticated yet and no existing session
-                if (!botState.isAuthenticated && !botState.sessionExists) {
-                    console.log('No valid session found, clearing browser data...');
-                    try {
-                        const browserDataPath = path.join(sessionsPath, 'bot-whatsapp/Default');
-                        await fs.rm(browserDataPath, { recursive: true, force: true }).catch(() => {});
-                        console.log('Cleared browser data');
-                    } catch (error) {
-                        console.error('Error clearing browser data:', error);
-                    }
+                
+                // Clear session data on failure
+                try {
+                    const browserDataPath = path.join(sessionsPath, 'bot-whatsapp');
+                    await fs.rm(browserDataPath, { recursive: true, force: true }).catch(() => {});
+                    console.log('Cleared browser data');
+                } catch (cleanupError) {
+                    console.error('Error clearing browser data:', cleanupError);
                 }
-
-                // Wait before retrying
+                
+                // Wait before retry
                 await new Promise(resolve => setTimeout(resolve, 5000));
             }
         }
