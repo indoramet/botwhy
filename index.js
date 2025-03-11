@@ -665,18 +665,19 @@ client.on('message', async msg => {
             });
         }
 
+        const command = msg.body.toLowerCase();
+        console.log('Processing command:', command);
+
         // Check for admin commands first
-        if (await handleAdminCommand(msg)) {
+        const isAdminCommand = await handleAdminCommand(msg);
+        if (isAdminCommand) {
             console.log('Admin command handled');
             return;
         }
 
-        const command = msg.body.toLowerCase();
-        console.log('Processing command:', command);
-
-        // Process commands for both private and group chats if they start with !
+        // Process regular commands if not an admin command
         if (command.startsWith('!')) {
-            console.log('Processing command in chat:', command);
+            console.log('Processing regular command in chat:', command);
             
             try {
                 if (command === '!izin') {
