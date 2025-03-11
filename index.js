@@ -240,7 +240,9 @@ app.get('/health', (req, res) => {
         whatsapp: {
             ready: botState.isReady,
             authenticated: botState.isAuthenticated,
-            lastPing: botState.lastPing ? new Date(botState.lastPing).toISOString() : null
+            lastPing: botState.lastPing ? new Date(botState.lastPing).toISOString() : null,
+            sessionExists: botState.sessionExists,
+            reconnectAttempts: botState.reconnectAttempts
         },
         uptime: process.uptime()
     };
@@ -328,7 +330,9 @@ const client = new Client({
             '--ignore-certificate-errors',
             '--ignore-ssl-errors',
             '--ignore-certificate-errors-spki-list',
-            '--window-size=1280,720'
+            '--window-size=1280,720',
+            '--single-process',
+            '--no-zygote'
         ],
         defaultViewport: {
             width: 1280,
@@ -336,16 +340,16 @@ const client = new Client({
         },
         executablePath: process.env.CHROME_BIN || '/usr/bin/chromium',
         ignoreHTTPSErrors: true,
-        timeout: 30000,
-        protocolTimeout: 30000
+        timeout: 60000,
+        protocolTimeout: 60000
     },
-    webVersion: '2.2214.13',
+    webVersion: '2.2204.13',
     restartOnAuthFail: false,
     qrMaxRetries: 3,
-    authTimeoutMs: 30000,
-    qrTimeoutMs: 30000,
+    authTimeoutMs: 60000,
+    qrTimeoutMs: 60000,
     takeoverOnConflict: false,
-    takeoverTimeoutMs: 30000,
+    takeoverTimeoutMs: 60000,
     bypassCSP: true
 });
 
@@ -448,7 +452,7 @@ client.on('authenticated', async () => {
     setupMessageHandlers();
     console.log('Message handlers set up successfully');
     
-    // Set a shorter timeout for reaching ready state
+    // Set a longer timeout for reaching ready state
     const readyTimeout = setTimeout(async () => {
         console.log('Ready state timeout reached, checking WhatsApp Web state...');
         try {
@@ -456,6 +460,9 @@ client.on('authenticated', async () => {
             if (!page) {
                 throw new Error('No pupPage available');
             }
+            
+            // Force reload the page
+            await page.reload({ waitUntil: 'networkidle0', timeout: 60000 });
             
             const state = await page.evaluate(() => {
                 return {
@@ -479,7 +486,7 @@ client.on('authenticated', async () => {
         }
         
         await handleReconnect();
-    }, 15000);
+    }, 60000);
     
     client.once('ready', () => {
         clearTimeout(readyTimeout);
@@ -954,6 +961,46 @@ app.get('/', (req, res) => {
 
 app.get('/login', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+// Add admin endpoints for session management
+app.get('/admin/clear-session', async (req, res) => {
+    const adminKey = req.query.key;
+    if (adminKey !== process.env.ADMIN_KEY) {
+        return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    try {
+        console.log('Clearing session and restarting bot...');
+        
+        // Destroy the client first
+        if (client) {
+            await client.destroy();
+        }
+        
+        // Clear the sessions directory
+        await fs.rm('./sessions', { recursive: true, force: true });
+        
+        // Reset bot state
+        botState = {
+            isReady: false,
+            isAuthenticated: false,
+            lastQR: null,
+            sessionExists: false,
+            reconnectAttempts: 0,
+            lastPing: Date.now()
+        };
+        
+        // Restart the bot
+        setTimeout(() => {
+            process.exit(1); // Railway will automatically restart the process
+        }, 1000);
+        
+        res.json({ success: true, message: 'Session cleared, bot is restarting' });
+    } catch (error) {
+        console.error('Error clearing session:', error);
+        res.status(500).json({ error: 'Failed to clear session' });
+    }
 });
 
 const PORT = process.env.PORT || 8080;
