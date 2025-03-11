@@ -426,7 +426,7 @@ const client = new Client({
             '--disable-extensions',
             '--disable-web-security',
             '--disable-features=site-per-process',
-            '--window-size=800,600',
+            '--window-size=1280,900',
             '--single-process',
             '--no-zygote',
             '--disable-features=AudioServiceOutOfProcess',
@@ -481,7 +481,29 @@ const client = new Client({
             '--disable-features=WebOTP',
             '--disable-features=WebPayments',
             '--disable-features=WebUSB',
-            '--disable-features=WebXR'
+            '--disable-features=WebXR',
+            '--aggressive-cache-discard',
+            '--disable-cache',
+            '--disable-application-cache',
+            '--disable-offline-load-stale-cache',
+            '--disk-cache-size=0',
+            '--media-cache-size=0',
+            '--disable-gpu-shader-disk-cache',
+            '--disable-gpu-program-cache',
+            '--disable-gpu-driver-bug-workarounds',
+            '--memory-pressure-off',
+            '--disable-pinch',
+            '--disable-speech-api',
+            '--disable-voice-input',
+            '--disable-wake-on-wifi',
+            '--disable-web-security',
+            '--disable-webaudio',
+            '--disable-webgl',
+            '--disable-webgl2',
+            '--disable-webrtc',
+            '--disable-websecurity',
+            '--disable-xss-auditor',
+            '--no-startup-window'
         ],
         defaultViewport: {
             width: 1280,
@@ -501,7 +523,8 @@ const client = new Client({
         handleSIGTERM: false,
         handleSIGHUP: false,
         pipe: true,
-        dumpio: false
+        dumpio: false,
+        userDataDir: null
     },
     webVersion: '2.2408.52',
     webVersionCache: {
@@ -609,14 +632,22 @@ client.on('ready', async () => {
     
     try {
         // Add longer delay before loading chats
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        await new Promise(resolve => setTimeout(resolve, 10000));
         
-        // Wrap chat loading in retry logic
+        // Wrap chat loading in enhanced retry logic
         let retries = 0;
-        const maxRetries = 3;
+        const maxRetries = 5;
         
         while (retries < maxRetries) {
             try {
+                // Verify client state before loading chats
+                if (!client.pupPage || !client.info) {
+                    throw new Error('Client state invalid');
+                }
+                
+                // Test page connection
+                await client.pupPage.evaluate(() => true);
+                
                 const chats = await client.getChats();
                 console.log(`Loaded ${chats.length} chats`);
                 io.emit('ready');
@@ -624,18 +655,20 @@ client.on('ready', async () => {
             } catch (error) {
                 retries++;
                 console.error(`Error loading chats (attempt ${retries}/${maxRetries}):`, error);
+                
                 if (retries === maxRetries) {
-                    console.log('Failed to load chats, but continuing with bot operation');
-                    io.emit('ready');
-                } else {
-                    await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds before retry
+                    console.log('Failed to load chats, attempting reconnection...');
+                    await handleReconnect();
+                    return;
                 }
+                
+                // Wait longer between retries
+                await new Promise(resolve => setTimeout(resolve, 10000));
             }
         }
     } catch (error) {
         console.error('Error in ready event:', error);
-        // Don't throw the error, just log it and continue
-        io.emit('ready');
+        await handleReconnect();
     }
 });
 
@@ -900,14 +933,32 @@ async function initializeClient() {
             await fs.mkdir(sessionsPath, { recursive: true });
         }
 
-        // Initialize the client with retry logic
+        // Initialize the client with enhanced retry logic
         let initAttempts = 0;
         const maxInitAttempts = 3;
 
         while (initAttempts < maxInitAttempts) {
             try {
                 console.log(`Attempting to initialize client (attempt ${initAttempts + 1}/${maxInitAttempts})...`);
+                
+                // Clean up any existing browser instances
+                if (client.pupBrowser) {
+                    await client.pupBrowser.close().catch(() => {});
+                }
+                
+                // Wait before initialization
+                await new Promise(resolve => setTimeout(resolve, 5000));
+                
                 await client.initialize();
+                
+                // Verify initialization
+                if (!client.pupPage || !client.info) {
+                    throw new Error('Client initialization incomplete');
+                }
+                
+                // Test page connection
+                await client.pupPage.evaluate(() => true);
+                
                 console.log('Client initialized successfully');
                 break;
             } catch (initError) {
@@ -918,8 +969,8 @@ async function initializeClient() {
                     throw initError;
                 }
 
-                // Wait before retrying
-                await new Promise(resolve => setTimeout(resolve, 5000));
+                // Wait longer before retrying
+                await new Promise(resolve => setTimeout(resolve, 10000));
             }
         }
     } catch (error) {
@@ -931,7 +982,7 @@ async function initializeClient() {
 // Add reconnection handler
 async function handleReconnect() {
     const MAX_RECONNECT_ATTEMPTS = 5;
-    const RECONNECT_INTERVAL = 30000; // 30 seconds
+    const RECONNECT_INTERVAL = 60000; // Increased to 60 seconds
 
     if (!botState.reconnectAttempts) {
         botState.reconnectAttempts = 0;
@@ -951,25 +1002,25 @@ async function handleReconnect() {
             if (client.pupPage) {
                 await Promise.race([
                     client.pupPage.close().catch(() => {}),
-                    new Promise(resolve => setTimeout(resolve, 5000))
+                    new Promise(resolve => setTimeout(resolve, 10000))
                 ]);
             }
             if (client.pupBrowser) {
                 await Promise.race([
                     client.pupBrowser.close().catch(() => {}),
-                    new Promise(resolve => setTimeout(resolve, 5000))
+                    new Promise(resolve => setTimeout(resolve, 10000))
                 ]);
             }
             await Promise.race([
                 client.destroy(),
-                new Promise(resolve => setTimeout(resolve, 5000))
+                new Promise(resolve => setTimeout(resolve, 10000))
             ]);
         };
 
         await cleanup();
         console.log('Previous client instance destroyed');
 
-        // Wait before reconnecting
+        // Wait longer before reconnecting
         await new Promise(resolve => setTimeout(resolve, RECONNECT_INTERVAL));
 
         // Initialize new client with verification
@@ -978,10 +1029,10 @@ async function handleReconnect() {
         // Verify new connection with multiple checks
         if (client.pupPage && client.info) {
             try {
-                // Multiple verification attempts
+                // Multiple verification attempts with longer delays
                 for (let i = 0; i < 3; i++) {
                     await client.pupPage.evaluate(() => true);
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await new Promise(resolve => setTimeout(resolve, 5000));
                 }
                 
                 botState.reconnectAttempts = 0;
@@ -995,8 +1046,8 @@ async function handleReconnect() {
         }
     } catch (error) {
         console.error('Reconnection attempt failed:', error);
-        // Add delay before recursive call
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        // Add longer delay before recursive call
+        await new Promise(resolve => setTimeout(resolve, 30000));
         await handleReconnect();
     }
 }
