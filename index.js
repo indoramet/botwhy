@@ -151,23 +151,16 @@ async function handleAdminCommand(msg) {
     const command = msg.body.toLowerCase();
     const parts = msg.body.split(' ');
 
-    if (command.startsWith('!update')) {
-        if (parts.length < 3) {
-            await msg.reply('Format: !update <command_name> <new_value>\nExample: !update laporan1 https://example.com');
-            return true;
-        }
-
+    if (command.startsWith('!update ')) {
         const commandToUpdate = parts[1].toLowerCase();
         const newValue = parts.slice(2).join(' ');
         
         if (dynamicCommands.hasOwnProperty(commandToUpdate)) {
-            const oldValue = dynamicCommands[commandToUpdate];
             dynamicCommands[commandToUpdate] = newValue;
-            await msg.reply(`✅ Command *${commandToUpdate}* has been updated\n\nOld value:\n${oldValue}\n\nNew value:\n${newValue}`);
+            await msg.reply(`✅ Command ${commandToUpdate} has been updated to: ${newValue}`);
             return true;
         } else {
-            const availableCommands = Object.keys(dynamicCommands).join('\n');
-            await msg.reply(`❌ Invalid command name: *${commandToUpdate}*\n\nAvailable commands:\n${availableCommands}`);
+            await msg.reply('❌ Invalid command name. Available commands: ' + Object.keys(dynamicCommands).join(', '));
             return true;
         }
     }
@@ -339,7 +332,7 @@ app.get('/health', (req, res) => {
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Konfigurasi keamanan
-const DELAY_BETWEEN_MESSAGES = 2000; // 3 detik delay antar pesan
+const DELAY_BETWEEN_MESSAGES = 3000; // 3 detik delay antar pesan
 const MAX_MESSAGES_PER_INTERVAL = 10; // maksimal 10 pesan per interval
 const INTERVAL_RESET = 60000; // reset counter setiap 1 menit
 const MESSAGE_QUEUE = [];
@@ -401,7 +394,7 @@ const client = new Client({
             '--disable-extensions',
             '--disable-web-security',
             '--disable-features=site-per-process,IsolateOrigins',
-            '--window-size=1280,720',
+            '--window-size=800,600',
             '--single-process',
             '--no-zygote',
             '--disable-features=AudioServiceOutOfProcess',
@@ -412,7 +405,11 @@ const client = new Client({
             '--disable-infobars',
             '--disable-notifications',
             '--use-gl=disabled',
+            '--disable-setuid-sandbox',
+            '--no-zygote',
             '--deterministic-fetch',
+            '--disable-features=IsolateOrigins',
+            '--disable-features=site-per-process',
             '--disable-blink-features=AutomationControlled',
             '--disable-sync',
             '--disable-background-networking',
@@ -431,36 +428,11 @@ const client = new Client({
             '--disable-breakpad',
             '--disable-canvas-aa',
             '--disable-2d-canvas-clip-aa',
-            '--disable-gl-drawing-for-tests',
-            '--disable-dev-profile',
-            '--disable-software-rasterizer',
-            '--disable-extensions-http-throttling',
-            '--disable-popup-blocking',
-            '--disable-hang-monitor',
-            '--disable-client-side-phishing-detection',
-            '--disable-component-update',
-            '--disable-sync-preferences',
-            '--disable-sync-types',
-            '--disable-threaded-scrolling',
-            '--disable-web-security',
-            '--disable-zero-browsers-open-for-tests',
-            '--enable-automation',
-            '--disable-prompt-on-repost',
-            '--disable-domain-reliability',
-            '--disable-browser-side-navigation',
-            '--disable-features=InterestFeedContentSuggestions',
-            '--disable-features=InterestFeedV2',
-            '--disable-features=AutofillServerCommunication',
-            '--disable-features=ChromeWhatsNewUI',
-            '--metrics-recording-only',
-            '--no-default-browser-check',
-            '--no-experiments',
-            '--no-pings',
-            '--password-store=basic'
+            '--disable-gl-drawing-for-tests'
         ],
         defaultViewport: {
-            width: 1280,
-            height: 720,
+            width: 800,
+            height: 600,
             deviceScaleFactor: 1,
             hasTouch: false,
             isLandscape: true,
@@ -469,8 +441,8 @@ const client = new Client({
         executablePath: '/usr/bin/chromium',
         browserWSEndpoint: null,
         ignoreHTTPSErrors: true,
-        timeout: 180000,
-        protocolTimeout: 180000,
+        timeout: 0,
+        protocolTimeout: 0,
         waitForInitialPage: true,
         handleSIGINT: false,
         handleSIGTERM: false,
@@ -480,14 +452,15 @@ const client = new Client({
     webVersionCache: {
         type: 'none'
     },
-    restartOnAuthFail: true,
-    qrMaxRetries: 10,
-    authTimeoutMs: 180000,
-    qrTimeoutMs: 60000,
+    restartOnAuthFail: false,
+    qrMaxRetries: 0,
+    authTimeoutMs: 0,
+    qrTimeoutMs: 0,
     takeoverOnConflict: true,
     takeoverTimeoutMs: 0,
     bypassCSP: true,
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    linkPreviewApiServers: ['https://preview.whatsapp.com/api/v1/preview']
 });
 
 // Track bot state
@@ -557,72 +530,13 @@ client.on('qr', async (qr) => {
         console.log('QR received while authenticated, ignoring...');
         return;
     }
-    
-    console.log('\n=== New QR Code Generated ===');
-    console.log('Timestamp:', new Date().toISOString());
-    
+    console.log('QR RECEIVED');
     try {
-        // Clear any existing QR code first
-        botState.lastQR = null;
-        
-        // Generate new QR code with higher quality settings
-        const qrImage = await QRCode.toDataURL(qr, {
-            errorCorrectionLevel: 'H',
-            margin: 2,
-            scale: 10,
-            width: 512,
-            color: {
-                dark: '#000000',
-                light: '#ffffff'
-            }
-        });
-        
-        botState.lastQR = `
-            <div style="text-align: center; padding: 20px;">
-                <img src="${qrImage}" alt="QR Code" style="max-width: 512px; width: 100%; height: auto;" />
-                <p style="color: #666; margin-top: 15px; font-size: 16px;">
-                    Buka WhatsApp di ponsel Anda<br>
-                    Ketuk Menu atau Setelan dan pilih WhatsApp Web<br>
-                    Arahkan ponsel Anda ke layar ini untuk memindai kode QR<br>
-                    <span style="color: #ff0000;">QR code akan diperbarui dalam 20 detik jika tidak dipindai</span>
-                </p>
-            </div>`;
-        
+        const qrImage = await QRCode.toDataURL(qr);
+        botState.lastQR = `<img src="${qrImage}" alt="QR Code" />`;
         io.emit('qr', botState.lastQR);
-        console.log('New QR code generated and sent to client');
-        
-        // Set up automatic regeneration if not scanned
-        setTimeout(async () => {
-            if (!botState.isAuthenticated) {
-                console.log('QR code expired, attempting to regenerate...');
-                try {
-                    // Destroy existing client
-                    await client.destroy().catch(console.error);
-                    
-                    // Clear session data
-                    const sessionsPath = '/app/sessions';
-                    await fs.rm(sessionsPath, { recursive: true, force: true }).catch(() => {});
-                    
-                    // Wait before reinitializing
-                    await new Promise(resolve => setTimeout(resolve, 5000));
-                    
-                    // Initialize new client
-                    await initializeClient();
-                } catch (error) {
-                    console.error('Error regenerating QR code:', error);
-                }
-            }
-        }, 20000); // 20 seconds timeout
     } catch (err) {
         console.error('Error generating QR code:', err);
-        // Try to recover by reinitializing
-        try {
-            await client.destroy();
-            await new Promise(resolve => setTimeout(resolve, 5000));
-            await initializeClient();
-        } catch (reinitError) {
-            console.error('Failed to recover from QR generation error:', reinitError);
-        }
     }
 });
 
@@ -712,235 +626,63 @@ process.on('SIGINT', async () => {
 });
 
 let activeSocket = null;
+
 const lastUserMessage = new Map();
-
-// Add heartbeat mechanism and state monitoring
-let lastHeartbeat = Date.now();
-let isClientHealthy = true;
-
-// Add reconnection handler
-async function handleReconnect() {
-    const MAX_RECONNECT_ATTEMPTS = 5;
-    const RECONNECT_INTERVAL = 30000; // 30 seconds
-
-    if (!botState.reconnectAttempts) {
-        botState.reconnectAttempts = 0;
-    }
-
-    if (botState.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-        console.log('Max reconnection attempts reached, destroying client and clearing session...');
-        try {
-            // Destroy existing client
-            await client.destroy().catch(console.error);
-            
-            // Clear all session data
-            const sessionsPath = '/app/sessions';
-            await fs.rm(sessionsPath, { recursive: true, force: true }).catch(() => {});
-            
-            // Reset state
-            botState.isReady = false;
-            botState.isAuthenticated = false;
-            botState.lastQR = null;
-            botState.sessionExists = false;
-            botState.reconnectAttempts = 0;
-            isClientHealthy = false;
-            
-            console.log('Client destroyed and session cleared');
-            
-            // Wait before attempting fresh start
-            await new Promise(resolve => setTimeout(resolve, 5000));
-            
-            // Attempt fresh initialization
-            return await initializeClient();
-        } catch (error) {
-            console.error('Critical error during cleanup:', error);
-            process.exit(1);
-        }
-    }
-
-    botState.reconnectAttempts++;
-    console.log(`Attempting to reconnect (attempt ${botState.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
-
-    try {
-        // Destroy existing client if any
-        if (client.pupPage) {
-            console.log('Destroying previous client instance...');
-            await client.destroy().catch(console.error);
-            console.log('Previous client instance destroyed');
-        }
-
-        // Wait before attempting reconnection
-        console.log(`Waiting ${RECONNECT_INTERVAL/1000} seconds before reconnecting...`);
-        await new Promise(resolve => setTimeout(resolve, RECONNECT_INTERVAL));
-
-        // Initialize new client
-        console.log('Initializing new client...');
-        const success = await initializeClient();
-        
-        if (success) {
-            console.log('Reconnection successful!');
-            botState.reconnectAttempts = 0;
-            return true;
-        }
-        
-        return false;
-    } catch (error) {
-        console.error('Reconnection attempt failed:', error);
-        isClientHealthy = false;
-        return await handleReconnect();
-    }
-}
-
-// Monitor client health
-setInterval(async () => {
-    try {
-        if (!client.info || Date.now() - lastHeartbeat > 30000) { // 30 seconds threshold
-            console.log('\n=== Client Health Check ===');
-            console.log('Client appears unresponsive');
-            console.log('Last heartbeat:', new Date(lastHeartbeat).toISOString());
-            console.log('Current state:', botState);
-            
-            isClientHealthy = false;
-            
-            // Try to recover client
-            try {
-                const state = await client.getState();
-                console.log('Current WhatsApp state:', state);
-                
-                if (state === 'CONNECTED') {
-                    console.log('Client is connected but unresponsive, attempting recovery...');
-                    await handleReconnect();
-                } else {
-                    console.log('Client is disconnected, initiating reconnection...');
-                    await handleReconnect();
-                }
-            } catch (error) {
-                console.error('Error checking client state:', error);
-                await handleReconnect();
-            }
-        } else {
-            isClientHealthy = true;
-        }
-    } catch (error) {
-        console.error('Error in health check:', error);
-        isClientHealthy = false;
-    }
-}, 30000); // Check every 30 seconds
 
 client.on('message', async msg => {
     try {
-        // Update heartbeat on message received
-        lastHeartbeat = Date.now();
-        
-        console.log('\n=== New Message Received ===');
-        console.log('From:', msg.from);
-        console.log('Body:', msg.body);
-        console.log('Type:', msg.type);
-        console.log('Timestamp:', new Date().toISOString());
-        console.log('Client health status:', isClientHealthy ? '✅ Healthy' : '❌ Unhealthy');
-        console.log('Last heartbeat:', new Date(lastHeartbeat).toISOString());
-
-        // Check client state
-        if (!client.info || !isClientHealthy) {
-            console.log('❌ Client info not available or client unhealthy');
-            console.log('Current bot state:', {
-                isReady: botState.isReady,
-                isAuthenticated: botState.isAuthenticated,
-                reconnectAttempts: botState.reconnectAttempts,
-                isHealthy: isClientHealthy
-            });
-            
-            // Try to recover client state
-            try {
-                await client.getState();
-                console.log('Client state recovered');
-                lastHeartbeat = Date.now();
-                isClientHealthy = true;
-            } catch (stateError) {
-                console.error('Failed to recover client state:', stateError);
-                await handleReconnect();
-                return;
-            }
-        }
-
-        // Get chat with logging
-        let chat;
-        try {
-            console.log('Attempting to get chat...');
-            chat = await msg.getChat();
-            console.log('Chat retrieved successfully:', {
-                name: chat.name,
-                isGroup: chat.isGroup,
-                id: chat.id._serialized
-            });
-        } catch (error) {
-            console.error('❌ Error getting chat:', error);
-            await handleReconnect();
+        // Wait for client to be ready
+        if (!client.info) {
+            console.log('Client info not yet available, waiting...');
             return;
         }
+
+        // Get chat before anything else
+        const chat = await msg.getChat();
         
         // Check if chat is muted
         if (chat.isMuted) {
-            console.log('Chat is muted, skipping:', msg.from);
+            console.log('Chat is muted, skipping response:', msg.from);
             return;
         }
 
         // Rate limiting check
-        const now = Date.now();
-        const lastTime = lastUserMessage.get(msg.from) || 0;
-        
-        if (now - lastTime < 2000) {
-            console.log('Rate limiting applied for:', msg.from);
+    const now = Date.now();
+    const lastTime = lastUserMessage.get(msg.from) || 0;
+    
+    if (now - lastTime < 2000) {
+        console.log('Rate limiting response to:', msg.from);
+        return;
+    }
+
+    lastUserMessage.set(msg.from, now);
+
+    if (activeSocket) {
+        activeSocket.emit('message', {
+            from: msg.from,
+            body: msg.body,
+            time: moment().format('HH:mm:ss')
+        });
+    }
+
+        // Check for admin commands first
+        if (await handleAdminCommand(msg)) {
+            console.log('Admin command handled');
             return;
-        }
+    }
 
-        lastUserMessage.set(msg.from, now);
-
-        // Emit to socket if active
-        if (activeSocket) {
-            console.log('Emitting message to web client');
-            activeSocket.emit('message', {
-                from: msg.from,
-                body: msg.body,
-                time: moment().format('HH:mm:ss')
-            });
-        }
-
-        // Process admin commands with detailed logging
-        try {
-            console.log('Checking for admin command...');
-            if (ADMIN_NUMBERS.includes(msg.from)) {
-                console.log('Message is from admin');
-            }
-            if (await handleAdminCommand(msg)) {
-                console.log('✅ Admin command processed successfully');
-                return;
-            }
-        } catch (adminError) {
-            console.error('❌ Error handling admin command:', adminError);
-            await msg.reply('Error processing admin command. Please try again.');
-            return;
-        }
-
-        const command = msg.body.toLowerCase();
+    const command = msg.body.toLowerCase();
         console.log('Processing command:', command);
 
-        // Process regular commands
+        // Process commands for both private and group chats if they start with !
         if (command.startsWith('!')) {
-            console.log(`Processing command: ${command}`);
+            console.log('Processing command in chat:', command);
             
             try {
-                // Add small delay between commands
-                await new Promise(resolve => setTimeout(resolve, 500));
-
-                // Log command execution
-                console.log('Executing command...');
-                
-                // Command handling with logging
                 if (command === '!izin') {
-                    console.log('Executing !izin command');
+                    console.log('Processing !izin command');
                     await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
-                    console.log('Initial !izin response sent');
+                    console.log('Sent initial !izin response');
                     
                     const stickerPath = path.join(__dirname, 'public', 'assets', 'stickers', 'izin.jpeg');
                     console.log('Sticker path:', stickerPath);
@@ -954,16 +696,14 @@ client.on('message', async msg => {
                     
                     try {
                         await sendStickerFromFile(msg, stickerPath);
-                        console.log('✅ Sticker sent successfully');
+                        console.log('Sticker sent successfully');
                     } catch (stickerError) {
-                        console.error('❌ Failed to send sticker:', stickerError);
+                        console.error('Failed to send sticker:', stickerError);
                         await msg.reply('Maaf, terjadi kesalahan saat mengirim sticker. Pesan izin tetap tercatat.');
                     }
                 }
                 else if (command === '!software') {
-                    console.log('Executing !software command');
                     await msg.reply('https://s.id/softwarepraktikum');
-                    console.log('✅ Software link sent');
                 }
                 else if (command === '!template') {
                     await msg.reply('https://s.id/templatebdX');
@@ -1017,7 +757,6 @@ client.on('message', async msg => {
                     await msg.reply('you can visit my portofolio web app https://unlovdman.vercel.app/ for more information');
                 }
                 else if (command === '!help' || command === '!bantuan') {
-                    console.log('Executing help command');
                     await msg.reply(`Daftar perintah yang tersedia:
 !jadwal - Informasi jadwal praktikum
 !laporan - Cara upload laporan
@@ -1029,81 +768,23 @@ client.on('message', async msg => {
 !template - Link template laporan
 !tugasakhir - Informasi tugas akhir
 `);
-                    console.log('✅ Help message sent');
                 }
-                
-                console.log('✅ Command executed successfully:', command);
             } catch (cmdError) {
-                console.error('❌ Error executing command:', cmdError);
+                console.error('Error executing command:', cmdError);
                 await msg.reply('Maaf, terjadi kesalahan dalam memproses perintah. Silakan coba lagi.');
             }
         }
     } catch (error) {
-        console.error('❌ Critical error in message handler:', error);
-        isClientHealthy = false;
-        try {
-            await msg.reply('Terjadi kesalahan sistem. Mohon coba beberapa saat lagi.');
-        } catch (replyError) {
-            console.error('Failed to send error message:', replyError);
-        }
-    } finally {
-        console.log('=== Message Processing Complete ===\n');
+        console.error('Critical error in message handler:', error);
     }
 });
 
-// Add more state change logging
 client.on('change_state', state => {
-    console.log('\n=== Client State Change ===');
-    console.log('New state:', state);
-    console.log('Bot state:', botState);
-    console.log('=========================\n');
+    console.log('Client state changed to:', state);
 });
 
-// Enhanced loading screen logging
 client.on('loading_screen', (percent, message) => {
-    console.log('\n=== Loading Screen Update ===');
-    console.log('Progress:', percent + '%');
-    console.log('Message:', message);
-    
-    // Add more descriptive status messages
-    let statusMessage = 'Menghubungkan ke WhatsApp...';
-    if (percent > 0) {
-        statusMessage = `Menghubungkan ke WhatsApp (${percent}%)`;
-        if (percent === 100) {
-            statusMessage = 'Hampir selesai...';
-        }
-    }
-    
-    io.emit('status', {
-        percent,
-        message: statusMessage
-    });
-    
-    console.log('==========================\n');
-});
-
-// Add connection failure handler
-client.on('auth_failure', async (msg) => {
-    console.log('\n=== Authentication Failed ===');
-    console.error('Auth failure reason:', msg);
-    
-    botState.isAuthenticated = false;
-    botState.isReady = false;
-    
-    // Clear session and retry
-    try {
-        await client.destroy();
-        const sessionsPath = '/app/sessions';
-        await fs.rm(sessionsPath, { recursive: true, force: true }).catch(() => {});
-        
-        // Wait before reinitializing
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        
-        console.log('Retrying authentication...');
-        await initializeClient();
-    } catch (error) {
-        console.error('Failed to recover from auth failure:', error);
-    }
+    console.log('Loading screen:', percent, message);
 });
 
 // Handle unexpected errors
@@ -1129,115 +810,60 @@ const HOST = '0.0.0.0';
 // Initialize the client
 async function initializeClient() {
     try {
-        console.log('\n=== Starting WhatsApp Client Initialization ===');
-        console.log('Time:', new Date().toISOString());
+        console.log('Starting WhatsApp client initialization...');
         
-        // Reset state before initialization
-        botState.isReady = false;
-        botState.isAuthenticated = false;
-        isClientHealthy = false;
-        
-        // Clean up any existing browser processes
-        try {
-            await client.destroy().catch(() => {});
-        } catch (error) {
-            console.log('No existing client to destroy');
-        }
-        
-        // Clean up and prepare sessions directory
+        // Ensure sessions directory exists
         const sessionsPath = '/app/sessions';
-        const profilePath = path.join(sessionsPath, 'session-bot-whatsapp');
-        const singletonLockPath = path.join(profilePath, 'SingletonLock');
-        
         try {
-            // Remove existing session data and SingletonLock
-            await fs.rm(sessionsPath, { recursive: true, force: true }).catch(() => {});
-            console.log('Cleaned up existing session data');
-            
-            // Create fresh sessions directory with proper permissions
-            await fs.mkdir(sessionsPath, { recursive: true });
-            await fs.chmod(sessionsPath, 0o777).catch(() => {});
-            
-            // Create profile directory
-            await fs.mkdir(profilePath, { recursive: true });
-            await fs.chmod(profilePath, 0o777).catch(() => {});
-            
-            // Ensure SingletonLock is removed
-            try {
-                await fs.unlink(singletonLockPath).catch(() => {});
-            } catch (error) {
-                console.log('No SingletonLock to remove');
-            }
-            
-            // Create store directory
-            await fs.mkdir(path.join(sessionsPath, '.store'), { recursive: true });
-            
-            // Small delay to ensure file system operations complete
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            console.log('Created fresh sessions directory structure');
+            await fs.access(sessionsPath);
+            console.log('Sessions directory exists');
         } catch (error) {
-            console.error('Error managing sessions directory:', error);
+            console.log('Creating sessions directory...');
+            await fs.mkdir(sessionsPath, { recursive: true });
         }
-        
-        // Initialize with retry logic
+
+        // Ensure store directory exists
+        const storePath = '/app/sessions/.store';
+        try {
+            await fs.access(storePath);
+            console.log('Store directory exists');
+        } catch (error) {
+            console.log('Creating store directory...');
+            await fs.mkdir(storePath, { recursive: true });
+        }
+
+        // Initialize the client with retry logic
         let initAttempts = 0;
         const maxInitAttempts = 3;
-        
+
         while (initAttempts < maxInitAttempts) {
             try {
-                console.log(`\nInitialization attempt ${initAttempts + 1}/${maxInitAttempts}`);
-                
-                // Additional delay between attempts
-                if (initAttempts > 0) {
-                    // Remove SingletonLock before retry
-                    try {
-                        await fs.unlink(singletonLockPath).catch(() => {});
-                    } catch (error) {
-                        console.log('No SingletonLock to remove before retry');
-                    }
-                    await new Promise(resolve => setTimeout(resolve, 5000));
-                }
-                
+                console.log(`Attempting to initialize client (attempt ${initAttempts + 1}/${maxInitAttempts})...`);
                 await client.initialize();
-                
-                // Wait for client to be ready
-                const readyPromise = new Promise((resolve, reject) => {
-                    const timeout = setTimeout(() => {
-                        reject(new Error('Client initialization timeout'));
-                    }, 60000);
-                    
-                    client.once('ready', () => {
-                        clearTimeout(timeout);
-                        resolve();
-                    });
-                });
-                
-                await readyPromise;
-                
-                lastHeartbeat = Date.now();
-                isClientHealthy = true;
-                
                 console.log('Client initialized successfully');
-                return true;
-            } catch (error) {
+                break;
+            } catch (initError) {
                 initAttempts++;
-                console.error(`Initialization attempt ${initAttempts} failed:`, error);
-                
-                // Clean up after failed attempt
-                await client.destroy().catch(() => {});
-                
-                // Remove SingletonLock after failure
-                try {
-                    await fs.unlink(singletonLockPath).catch(() => {});
-                } catch (error) {
-                    console.log('No SingletonLock to remove after failure');
-                }
-                
+                console.error(`Initialization attempt ${initAttempts} failed:`, initError);
+
                 if (initAttempts === maxInitAttempts) {
-                    // On final failure, ensure sessions are cleaned up
-                    await fs.rm(sessionsPath, { recursive: true, force: true }).catch(() => {});
-                    throw error;
+                    throw initError;
                 }
+
+                // Only clear data if we haven't authenticated yet and no existing session
+                if (!botState.isAuthenticated && !botState.sessionExists) {
+                    console.log('No valid session found, clearing browser data...');
+                    try {
+                        const browserDataPath = path.join(sessionsPath, 'bot-whatsapp/Default');
+                        await fs.rm(browserDataPath, { recursive: true, force: true }).catch(() => {});
+                        console.log('Cleared browser data');
+                    } catch (error) {
+                        console.error('Error clearing browser data:', error);
+                    }
+                }
+
+                // Wait before retrying
+                await new Promise(resolve => setTimeout(resolve, 5000));
             }
         }
     } catch (error) {
@@ -1246,16 +872,55 @@ async function initializeClient() {
     }
 }
 
+// Add reconnection handler
+async function handleReconnect() {
+    const MAX_RECONNECT_ATTEMPTS = 5;
+    const RECONNECT_INTERVAL = 60000; // 1 minute
+
+    if (!botState.reconnectAttempts) {
+        botState.reconnectAttempts = 0;
+    }
+
+    if (botState.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        console.log('Max reconnection attempts reached, restarting process...');
+        process.exit(1);
+    }
+
+    botState.reconnectAttempts++;
+    console.log(`Attempting to reconnect (attempt ${botState.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+
+    try {
+        await client.destroy();
+        console.log('Previous client instance destroyed');
+    } catch (error) {
+        console.error('Error destroying previous client instance:', error);
+    }
+
+    // Wait before attempting to reconnect
+    await new Promise(resolve => setTimeout(resolve, RECONNECT_INTERVAL));
+
+    try {
+        await initializeClient();
+        if (botState.isAuthenticated) {
+            botState.reconnectAttempts = 0; // Reset counter on successful reconnection
+        }
+    } catch (error) {
+        console.error('Reconnection attempt failed:', error);
+        await handleReconnect();
+    }
+}
+
 // Update the startBot function
 async function startBot() {
     try {
-        // Always start fresh by cleaning up any existing session
+        // Check if sessions directory exists and has content
         const sessionsPath = '/app/sessions';
         try {
-            await fs.rm(sessionsPath, { recursive: true, force: true }).catch(() => {});
-            console.log('Cleaned up existing sessions');
+            await fs.access(path.join(sessionsPath, 'bot-whatsapp'));
+            botState.sessionExists = true;
+            console.log('Existing session found');
         } catch (error) {
-            console.log('No existing sessions to clean up');
+            console.log('No existing session found');
         }
 
         await initializeClient();
