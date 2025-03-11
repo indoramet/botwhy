@@ -339,7 +339,7 @@ app.get('/health', (req, res) => {
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Konfigurasi keamanan
-const DELAY_BETWEEN_MESSAGES = 3000; // 3 detik delay antar pesan
+const DELAY_BETWEEN_MESSAGES = 2000; // 3 detik delay antar pesan
 const MAX_MESSAGES_PER_INTERVAL = 10; // maksimal 10 pesan per interval
 const INTERVAL_RESET = 60000; // reset counter setiap 1 menit
 const MESSAGE_QUEUE = [];
@@ -435,11 +435,38 @@ const client = new Client({
             '--disable-breakpad',
             '--disable-canvas-aa',
             '--disable-2d-canvas-clip-aa',
-            '--disable-gl-drawing-for-tests'
+            '--disable-gl-drawing-for-tests',
+            '--disable-dev-profile',
+            '--disable-software-rasterizer',
+            '--disable-extensions-http-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding',
+            '--disable-popup-blocking',
+            '--disable-hang-monitor',
+            '--disable-client-side-phishing-detection',
+            '--disable-component-update',
+            '--disable-sync-preferences',
+            '--disable-sync-types',
+            '--disable-threaded-scrolling',
+            '--disable-web-security',
+            '--disable-zero-browsers-open-for-tests',
+            '--enable-automation',
+            '--disable-prompt-on-repost',
+            '--disable-domain-reliability',
+            '--disable-browser-side-navigation',
+            '--disable-features=InterestFeedContentSuggestions',
+            '--disable-features=InterestFeedV2',
+            '--disable-features=AutofillServerCommunication',
+            '--disable-features=ChromeWhatsNewUI',
+            '--metrics-recording-only',
+            '--no-default-browser-check',
+            '--no-experiments',
+            '--no-pings',
+            '--password-store=basic'
         ],
         defaultViewport: {
-            width: 800,
-            height: 600,
+            width: 1280,
+            height: 720,
             deviceScaleFactor: 1,
             hasTouch: false,
             isLandscape: true,
@@ -448,8 +475,8 @@ const client = new Client({
         executablePath: '/usr/bin/chromium',
         browserWSEndpoint: null,
         ignoreHTTPSErrors: true,
-        timeout: 0,
-        protocolTimeout: 0,
+        timeout: 120000,
+        protocolTimeout: 120000,
         waitForInitialPage: true,
         handleSIGINT: false,
         handleSIGTERM: false,
@@ -459,10 +486,10 @@ const client = new Client({
     webVersionCache: {
         type: 'none'
     },
-    restartOnAuthFail: false,
-    qrMaxRetries: 0,
-    authTimeoutMs: 0,
-    qrTimeoutMs: 0,
+    restartOnAuthFail: true,
+    qrMaxRetries: 5,
+    authTimeoutMs: 120000,
+    qrTimeoutMs: 60000,
     takeoverOnConflict: true,
     takeoverTimeoutMs: 0,
     bypassCSP: true,
@@ -641,11 +668,23 @@ client.on('message', async msg => {
         // Wait for client to be ready
         if (!client.info) {
             console.log('Client info not yet available, waiting...');
-            return;
+            await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+            if (!client.info) {
+                console.log('Client still not ready, attempting reconnection...');
+                await handleReconnect();
+                return;
+            }
         }
 
         // Get chat before anything else
-        const chat = await msg.getChat();
+        let chat;
+        try {
+            chat = await msg.getChat();
+        } catch (error) {
+            console.error('Error getting chat:', error);
+            await handleReconnect();
+            return;
+        }
         
         // Check if chat is muted
         if (chat.isMuted) {
@@ -653,39 +692,48 @@ client.on('message', async msg => {
             return;
         }
 
-        // Rate limiting check
-    const now = Date.now();
-    const lastTime = lastUserMessage.get(msg.from) || 0;
-    
-    if (now - lastTime < 2000) {
-        console.log('Rate limiting response to:', msg.from);
-        return;
-    }
-
-    lastUserMessage.set(msg.from, now);
-
-    if (activeSocket) {
-        activeSocket.emit('message', {
-            from: msg.from,
-            body: msg.body,
-            time: moment().format('HH:mm:ss')
-        });
-    }
-
-        // Check for admin commands first
-        if (await handleAdminCommand(msg)) {
-            console.log('Admin command handled');
+        // Rate limiting check with increased threshold for stability
+        const now = Date.now();
+        const lastTime = lastUserMessage.get(msg.from) || 0;
+        
+        if (now - lastTime < 2000) {
+            console.log('Rate limiting response to:', msg.from);
             return;
-    }
+        }
 
-    const command = msg.body.toLowerCase();
+        lastUserMessage.set(msg.from, now);
+
+        if (activeSocket) {
+            activeSocket.emit('message', {
+                from: msg.from,
+                body: msg.body,
+                time: moment().format('HH:mm:ss')
+            });
+        }
+
+        // Check for admin commands first with error handling
+        try {
+            if (await handleAdminCommand(msg)) {
+                console.log('Admin command handled successfully');
+                return;
+            }
+        } catch (adminError) {
+            console.error('Error handling admin command:', adminError);
+            await msg.reply('Error processing admin command. Please try again.');
+            return;
+        }
+
+        const command = msg.body.toLowerCase();
         console.log('Processing command:', command);
 
-        // Process commands for both private and group chats if they start with !
+        // Process commands with better error handling
         if (command.startsWith('!')) {
             console.log('Processing command in chat:', command);
             
             try {
+                // Add delay between commands to prevent overload
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
                 if (command === '!izin') {
                     console.log('Processing !izin command');
                     await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
@@ -882,7 +930,7 @@ async function initializeClient() {
 // Add reconnection handler
 async function handleReconnect() {
     const MAX_RECONNECT_ATTEMPTS = 5;
-    const RECONNECT_INTERVAL = 60000; // 1 minute
+    const RECONNECT_INTERVAL = 30000; // 30 seconds
 
     if (!botState.reconnectAttempts) {
         botState.reconnectAttempts = 0;
@@ -890,6 +938,11 @@ async function handleReconnect() {
 
     if (botState.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
         console.log('Max reconnection attempts reached, restarting process...');
+        try {
+            await client.destroy();
+        } catch (error) {
+            console.error('Error destroying client during restart:', error);
+        }
         process.exit(1);
     }
 
@@ -897,24 +950,48 @@ async function handleReconnect() {
     console.log(`Attempting to reconnect (attempt ${botState.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
 
     try {
-        await client.destroy();
-        console.log('Previous client instance destroyed');
-    } catch (error) {
-        console.error('Error destroying previous client instance:', error);
-    }
+        // First try to destroy the existing client
+        try {
+            await client.destroy();
+            console.log('Previous client instance destroyed');
+        } catch (error) {
+            console.error('Error destroying previous client instance:', error);
+        }
 
-    // Wait before attempting to reconnect
-    await new Promise(resolve => setTimeout(resolve, RECONNECT_INTERVAL));
+        // Clear any existing sessions if we're having persistent issues
+        if (botState.reconnectAttempts > 2) {
+            try {
+                const sessionsPath = '/app/sessions';
+                const browserDataPath = path.join(sessionsPath, 'bot-whatsapp/Default');
+                await fs.rm(browserDataPath, { recursive: true, force: true }).catch(() => {});
+                console.log('Cleared browser data for fresh start');
+            } catch (error) {
+                console.error('Error clearing browser data:', error);
+            }
+        }
 
-    try {
+        // Wait before attempting to reconnect
+        console.log(`Waiting ${RECONNECT_INTERVAL/1000} seconds before reconnecting...`);
+        await new Promise(resolve => setTimeout(resolve, RECONNECT_INTERVAL));
+
+        // Initialize new client
+        console.log('Initializing new client...');
         await initializeClient();
-        if (botState.isAuthenticated) {
-            botState.reconnectAttempts = 0; // Reset counter on successful reconnection
+        
+        // If we get here, reset the reconnect counter
+        if (client.info) {
+            console.log('Reconnection successful!');
+            botState.reconnectAttempts = 0;
+            botState.isReady = true;
+            botState.isAuthenticated = true;
+            return true;
         }
     } catch (error) {
         console.error('Reconnection attempt failed:', error);
-        await handleReconnect();
+        // Try again recursively
+        return await handleReconnect();
     }
+    return false;
 }
 
 // Update the startBot function
