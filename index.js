@@ -637,22 +637,23 @@ client.on('message', async msg => {
             return;
         }
 
-        // Get chat before anything else
+        // Get chat and ensure properties are properly accessed
         const chat = await msg.getChat();
         const isGroup = Boolean(chat.isGroup);
-        
-        // Get bot's ID from client info
         const botNumber = client.info.wid._serialized;
         
-        // Get mentioned IDs from the message
-        const mentionedIds = msg._data?.mentionedJidList || [];
+        // Get mentioned IDs and ensure it's an array
+        const mentionedIds = Array.isArray(msg._data?.mentionedJidList) ? msg._data.mentionedJidList : [];
         
+        // Log full message details for debugging
         console.log('Received message:', {
             from: msg.from,
             body: msg.body,
             isGroup: isGroup,
+            chatName: chat.name,
             mentionedIds: mentionedIds,
-            botNumber: botNumber
+            botNumber: botNumber,
+            hasAtBot: msg.body.toLowerCase().includes('@bot')
         });
 
         const now = Date.now();
@@ -676,13 +677,6 @@ client.on('message', async msg => {
         const command = msg.body.toLowerCase();
         console.log('Processing command:', command);
 
-        console.log('Chat info:', {
-            isGroup: isGroup,
-            name: chat.name,
-            isMuted: Boolean(chat.isMuted),
-            botNumber: botNumber
-        });
-        
         // Check if chat is muted
         if (chat.isMuted) {
             console.log('Chat is muted, skipping response:', msg.from);
@@ -695,59 +689,48 @@ client.on('message', async msg => {
             return;
         }
 
-        // Process commands for both private chats and group chats
-        const shouldProcessCommand = !isGroup || 
-            (isGroup && (
-                mentionedIds.includes(botNumber) ||
-                msg.body.toLowerCase().includes('@bot')
-            ));
+        // Determine if we should process the command
+        let shouldProcessCommand = false;
+        if (!isGroup) {
+            // Always process commands in private chats
+            shouldProcessCommand = true;
+        } else {
+            // In groups, check for bot mention or @bot
+            const isBotMentioned = mentionedIds.includes(botNumber);
+            const hasAtBot = command.includes('@bot');
+            shouldProcessCommand = isBotMentioned || hasAtBot;
+        }
 
-        console.log('Should process command:', shouldProcessCommand, {
+        console.log('Command processing decision:', {
             isGroup: isGroup,
-            hasBotMention: mentionedIds.includes(botNumber),
-            hasAtBot: msg.body.toLowerCase().includes('@bot'),
-            mentionedIds: mentionedIds,
-            botNumber: botNumber
+            shouldProcess: shouldProcessCommand,
+            isBotMentioned: mentionedIds.includes(botNumber),
+            hasAtBot: command.includes('@bot')
         });
 
         if (shouldProcessCommand) {
-            console.log('Processing command in chat:', command);
-            
-            // Remove bot mention and number from command in group chats
+            // Clean the command
             let cleanCommand = command;
             if (isGroup) {
-                // Remove the bot's number if mentioned
+                // Remove bot mentions
                 if (botNumber) {
                     const botNumberWithoutSuffix = botNumber.split('@')[0];
                     cleanCommand = cleanCommand.replace(new RegExp(`@${botNumberWithoutSuffix}\\s*`, 'g'), '');
                 }
-                // Remove @bot
                 cleanCommand = cleanCommand.replace(/@bot\s*/gi, '');
-                // Clean up any extra whitespace
                 cleanCommand = cleanCommand.trim();
             }
             
             console.log('Clean command:', cleanCommand);
 
+            // Process commands
             try {
                 if (cleanCommand === '!izin') {
-                    console.log('Processing !izin command');
                     await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
-                    console.log('Sent initial !izin response');
                     
                     const stickerPath = path.join(__dirname, 'public', 'assets', 'stickers', 'izin.jpeg');
-                    console.log('Sticker path:', stickerPath);
-                    
-                    try {
-                        await fs.access(path.dirname(stickerPath));
-                    } catch (error) {
-                        console.log('Creating sticker directory');
-                        await fs.mkdir(path.dirname(stickerPath), { recursive: true });
-                    }
-                    
                     try {
                         await sendStickerFromFile(msg, stickerPath);
-                        console.log('Sticker sent successfully');
                     } catch (stickerError) {
                         console.error('Failed to send sticker:', stickerError);
                         await msg.reply('Maaf, terjadi kesalahan saat mengirim sticker. Pesan izin tetap tercatat.');
