@@ -458,39 +458,42 @@ client.on('ready', async () => {
     io.emit('ready');
     
     try {
-        // Wait a moment for WhatsApp Web to fully initialize
+        // Verify WhatsApp Web connection
+        const page = client.pupPage;
+        if (page) {
+            console.log('Checking WhatsApp Web connection...');
+            const connectionStatus = await page.evaluate(() => {
+                return {
+                    store: !!window.Store,
+                    wap: !!window.Store.Wap,
+                    stream: !!window.Store.Stream,
+                    conn: window.Store.Conn ? window.Store.Conn.connected : false
+                };
+            });
+            console.log('WhatsApp Web connection status:', connectionStatus);
+            
+            if (!connectionStatus.store || !connectionStatus.wap || !connectionStatus.stream) {
+                console.log('WhatsApp Web not fully initialized, waiting 5 seconds...');
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+        }
+        
+        // Wait for WhatsApp Web to fully initialize
         await new Promise(resolve => setTimeout(resolve, 3000));
         
         // Start connection check
         startConnectionCheck();
         
-        // Verify WhatsApp connection
-        const page = client.pupPage;
-        if (page) {
-            const isStoreReady = await page.evaluate(() => {
-                return window.Store && window.Store.Chat ? true : false;
-            });
-            
-            if (!isStoreReady) {
-                console.log('WhatsApp Store not yet ready, waiting...');
-                await new Promise(resolve => setTimeout(resolve, 5000));
-            }
-            
-            console.log('WhatsApp Web page is fully loaded');
-        }
-        
-        // Now try to load chats
+        // Try to load chats
         try {
             const chats = await client.getChats();
             console.log(`Loaded ${chats.length} chats successfully`);
         } catch (chatError) {
             console.error('Error loading initial chats:', chatError);
-            // Don't throw the error, just log it
         }
         
     } catch (error) {
         console.error('Error in ready event:', error);
-        // Don't throw the error, just log it
     }
 });
 
@@ -641,75 +644,37 @@ client.on('message_create', (msg) => {
 });
 
 client.on('message', async msg => {
-    // Immediate logging of raw message
-    console.log('=== MESSAGE EVENT TRIGGERED ===');
+    // Immediate debug logging
+    console.log('\n=== NEW MESSAGE RECEIVED ===');
     console.log('Message details:', {
         from: msg.from,
+        to: msg.to,
         body: msg.body,
-        hasQuoted: !!msg.hasQuotedMsg,
+        type: msg.type,
+        hasMedia: msg.hasMedia,
         timestamp: new Date().toISOString()
     });
 
     try {
-        // Verify client state
-        if (!botState.isReady) {
-            console.log('Bot not ready, message ignored');
-            return;
-        }
-
-        // Basic command check
-        const command = msg.body.toLowerCase();
-        console.log('Processing command:', command);
-
-        // Simple test response for any message starting with !
-        if (command.startsWith('!')) {
-            try {
-                console.log('Attempting to reply to command:', command);
-                await msg.reply('Received your command: ' + command);
-                console.log('Reply sent successfully');
-            } catch (replyError) {
-                console.error('Error sending reply:', replyError);
-                // Try alternative send method
-                const chat = await msg.getChat();
-                await chat.sendMessage('Received your command: ' + command);
-                console.log('Reply sent via alternative method');
-            }
-        }
-
-        // Continue with the rest of your message handling...
-
-        // Check client state
+        // Check client and bot state
         if (!client.pupPage || !client.info) {
-            console.log('Client not fully initialized, attempting to recover...');
-            try {
-                await client.initialize();
-                console.log('Client reinitialized successfully');
-            } catch (error) {
-                console.error('Failed to reinitialize client:', error);
-                return;
-            }
+            console.error('Client not properly initialized');
+            return;
         }
 
-        // Wait for client to be ready
         if (!botState.isReady) {
-            console.log('Client not ready, waiting...');
+            console.error('Bot not ready to handle messages');
             return;
         }
 
-        // Get chat before anything else
-        let chat;
-        try {
-            chat = await msg.getChat();
-            console.log('Chat retrieved:', {
-                name: chat.name,
-                id: chat.id._serialized,
-                isGroup: chat.isGroup
-            });
-        } catch (chatError) {
-            console.error('Error getting chat:', chatError);
-            return;
-        }
-        
+        // Get chat information
+        const chat = await msg.getChat();
+        console.log('Chat info:', {
+            name: chat.name,
+            id: chat.id._serialized,
+            isGroup: chat.isGroup
+        });
+
         // Check if chat is muted
         if (chat.isMuted) {
             console.log('Chat is muted, skipping response:', msg.from);
@@ -735,6 +700,9 @@ client.on('message', async msg => {
             });
         }
 
+        const command = msg.body.toLowerCase();
+        console.log('Processing command:', command);
+
         // Check for admin commands first
         if (ADMIN_NUMBERS.includes(msg.from)) {
             console.log('Admin command check for:', msg.from);
@@ -744,7 +712,7 @@ client.on('message', async msg => {
             }
         }
 
-        // Process commands for both private and group chats
+        // Process commands
         if (command.startsWith('!') || 
             ['kapan praktikum?', 'nilai praktikum?', 'sesi praktikum?', 
              'bagaimana cara upload laporan?', 'siapa yang membuat kamu?', 
