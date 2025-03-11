@@ -339,15 +339,12 @@ app.get('/health', (req, res) => {
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Konfigurasi keamanan
-const DELAY_BETWEEN_MESSAGES = 1000; // Reduce delay to 1 second
-const MAX_MESSAGES_PER_INTERVAL = 30; // Increase max messages per interval
-const INTERVAL_RESET = 30000; // Reset counter every 30 seconds
+const DELAY_BETWEEN_MESSAGES = 3000; // 3 detik delay antar pesan
+const MAX_MESSAGES_PER_INTERVAL = 10; // maksimal 10 pesan per interval
+const INTERVAL_RESET = 60000; // reset counter setiap 1 menit
 const MESSAGE_QUEUE = [];
 let messageCounter = 0;
 let lastMessageTime = 0;
-
-// Add message processing status tracking
-const processingMessages = new Set();
 
 // Fungsi untuk mengelola antrian pesan
 const processMessageQueue = async () => {
@@ -641,27 +638,9 @@ const lastUserMessage = new Map();
 
 client.on('message', async msg => {
     try {
-        const messageId = msg.id._serialized;
-        
-        // Check if message is already being processed
-        if (processingMessages.has(messageId)) {
-            console.log(`Message ${messageId} is already being processed, skipping...`);
-            return;
-        }
-
-        // Add message to processing set
-        processingMessages.add(messageId);
-        
-        console.log(`Processing new message: ${messageId}`, {
-            from: msg.from,
-            body: msg.body,
-            timestamp: new Date().toISOString()
-        });
-
         // Wait for client to be ready
         if (!client.info) {
             console.log('Client info not yet available, waiting...');
-            processingMessages.delete(messageId);
             return;
         }
 
@@ -671,53 +650,43 @@ client.on('message', async msg => {
         // Check if chat is muted
         if (chat.isMuted) {
             console.log('Chat is muted, skipping response:', msg.from);
-            processingMessages.delete(messageId);
             return;
         }
 
-        // Rate limiting check with more granular control
-        const now = Date.now();
-        const lastTime = lastUserMessage.get(msg.from) || 0;
-        const timeSinceLastMessage = now - lastTime;
-        
-        if (timeSinceLastMessage < DELAY_BETWEEN_MESSAGES) {
-            console.log(`Rate limiting response to ${msg.from}. Time since last message: ${timeSinceLastMessage}ms`);
-            processingMessages.delete(messageId);
-            return;
-        }
+        // Rate limiting check
+    const now = Date.now();
+    const lastTime = lastUserMessage.get(msg.from) || 0;
+    
+    if (now - lastTime < 2000) {
+        console.log('Rate limiting response to:', msg.from);
+        return;
+    }
 
-        lastUserMessage.set(msg.from, now);
+    lastUserMessage.set(msg.from, now);
 
-        if (activeSocket) {
-            activeSocket.emit('message', {
-                from: msg.from,
-                body: msg.body,
-                time: moment().format('HH:mm:ss')
-            });
-        }
+    if (activeSocket) {
+        activeSocket.emit('message', {
+            from: msg.from,
+            body: msg.body,
+            time: moment().format('HH:mm:ss')
+        });
+    }
 
         // Check for admin commands first
         if (await handleAdminCommand(msg)) {
-            console.log('Admin command handled successfully');
-            processingMessages.delete(messageId);
+            console.log('Admin command handled');
             return;
-        }
+    }
 
-        const command = msg.body.toLowerCase();
-        console.log(`Processing command: ${command} from ${msg.from}`);
+    const command = msg.body.toLowerCase();
+        console.log('Processing command:', command);
 
-        // Process commands if they start with !
+        // Process commands for both private and group chats if they start with !
         if (command.startsWith('!')) {
-            console.log(`Processing ! command in chat: ${command}`);
+            console.log('Processing command in chat:', command);
             
             try {
-                // Add command execution time tracking
-                const commandStartTime = Date.now();
-                
-                let commandExecuted = false;
-                
                 if (command === '!izin') {
-                    commandExecuted = true;
                     console.log('Processing !izin command');
                     await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
                     console.log('Sent initial !izin response');
@@ -741,79 +710,60 @@ client.on('message', async msg => {
                     }
                 }
                 else if (command === '!software') {
-                    commandExecuted = true;
                     await msg.reply('https://s.id/softwarepraktikum');
                 }
                 else if (command === '!template') {
-                    commandExecuted = true;
                     await msg.reply('https://s.id/templatebdX');
                 }
                 else if (command === '!asistensi') {
-                    commandExecuted = true;
                     await msg.reply('Untuk melihat jadwal asistensi gunakan command !asistensi1 sampai !asistensi7 sesuai dengan pertemuan yang ingin dilihat');
                 }
                 else if (command === '!tugasakhir') {
-                    commandExecuted = true;
                     await msg.reply(dynamicCommands.tugasakhir);
                 }
                 else if (command.startsWith('!asistensi') && /^!asistensi[1-7]$/.test(command)) {
-                    commandExecuted = true;
                     await msg.reply(dynamicCommands[command.substring(1)]);
                 }
                 else if (command === '!jadwal' || command === 'kapan praktikum?') {
-                    commandExecuted = true;
                     await msg.reply(dynamicCommands.jadwal);
                 }
                 else if (command === '!nilai' || command === 'nilai praktikum?') {
-                    commandExecuted = true;
                     await msg.reply(dynamicCommands.nilai);
                 }
                 else if (command === '!sesi' || command === 'sesi praktikum?') {
-                    commandExecuted = true;
                     await msg.reply('Praktikum sesi satu : 15:15 - 16:05\nPraktikum sesi dua : 16:10 - 17:00\nPraktikum sesi tiga : 20:00 - 20:50');
                 }
                 else if (command === '!laporan' || command === 'bagaimana cara upload laporan?') {
-                    commandExecuted = true;
                     await msg.reply('Untuk mengupload laporan:\n1. ubah file word laporan menjadi pdf\n2. cek link upload laporan sesuai dengan pertemuan ke berapa command contoh !laporan1\n3. klik link upload laporan\n4. upload laporan\n5. Tunggu sampai kelar\nJANGAN SAMPAI MENGUMPULKAN LAPORAN TERLAMBAT -5%!!!');
                 }
                 else if (command === '!laporan1') {
-                    commandExecuted = true;
                     await msg.reply(dynamicCommands.laporan1);
                 }
                 else if (command === '!laporan2') {
-                    commandExecuted = true;
                     await msg.reply(dynamicCommands.laporan2);
                 }
                 else if (command === '!laporan3') {
-                    commandExecuted = true;
                     await msg.reply(dynamicCommands.laporan3);
                 }
                 else if (command === '!laporan4') {
-                    commandExecuted = true;
                     await msg.reply(dynamicCommands.laporan4);
                 }
                 else if (command === '!laporan5') {
-                    commandExecuted = true;
                     await msg.reply(dynamicCommands.laporan5);
                 }
                 else if (command === '!laporan6') {
-                    commandExecuted = true;
                     await msg.reply(dynamicCommands.laporan6);
                 }
                 else if (command === '!laporan7') {
-                    commandExecuted = true;
                     await msg.reply(dynamicCommands.laporan7);
                 }
                 else if (command === '!who made you' || command === 'siapa yang membuat kamu?') {
-                    commandExecuted = true;
                     await msg.reply('I have been made by @unlovdman atas izin allah\nSaya dibuat oleh @unlovdman atas izin allah');
                 }
                 else if (command === '!contact' || command === 'gimana saya mengontak anda?') {
-                    commandExecuted = true;
                     await msg.reply('you can visit my portofolio web app https://unlovdman.vercel.app/ for more information');
                 }
                 else if (command === '!help' || command === '!bantuan') {
-                    commandExecuted = true;
                     await msg.reply(`Daftar perintah yang tersedia:
 !jadwal - Informasi jadwal praktikum
 !laporan - Cara upload laporan
@@ -826,25 +776,13 @@ client.on('message', async msg => {
 !tugasakhir - Informasi tugas akhir
 `);
                 }
-
-                const commandEndTime = Date.now();
-                console.log(`Command ${command} ${commandExecuted ? 'executed' : 'not found'} in ${commandEndTime - commandStartTime}ms`);
-
             } catch (cmdError) {
                 console.error('Error executing command:', cmdError);
                 await msg.reply('Maaf, terjadi kesalahan dalam memproses perintah. Silakan coba lagi.');
             }
         }
-        
-        // Remove message from processing set when done
-        processingMessages.delete(messageId);
-        
     } catch (error) {
         console.error('Critical error in message handler:', error);
-        // Ensure message is removed from processing set even if there's an error
-        if (msg && msg.id && msg.id._serialized) {
-            processingMessages.delete(msg.id._serialized);
-        }
     }
 });
 
