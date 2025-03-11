@@ -460,11 +460,32 @@ const client = new Client({
             '--no-pings',
             '--no-proxy-server',
             '--no-service-autorun',
-            '--password-store=basic'
+            '--password-store=basic',
+            '--enable-automation',
+            '--disable-blink-features=AutomationControlled',
+            '--disable-crash-reporter',
+            '--disable-breakpad',
+            '--disable-component-update',
+            '--disable-logging',
+            '--disable-dev-tools',
+            '--disable-browser-side-navigation',
+            '--disable-features=PaintHolding',
+            '--disable-features=BlinkGenPropertyTrees',
+            '--disable-features=LazyFrameLoading',
+            '--disable-features=AutoplayIgnoreWebAudio',
+            '--disable-features=MediaRouter',
+            '--disable-features=OptimizationHints',
+            '--disable-features=ProcessPerSiteUpToMainFrameThreshold',
+            '--disable-features=Translate',
+            '--disable-features=WakeLockScreenSaver',
+            '--disable-features=WebOTP',
+            '--disable-features=WebPayments',
+            '--disable-features=WebUSB',
+            '--disable-features=WebXR'
         ],
         defaultViewport: {
-            width: 800,
-            height: 600,
+            width: 1280,
+            height: 900,
             deviceScaleFactor: 1,
             hasTouch: false,
             isLandscape: true,
@@ -473,12 +494,14 @@ const client = new Client({
         executablePath: '/usr/bin/chromium',
         browserWSEndpoint: null,
         ignoreHTTPSErrors: true,
-        timeout: 120000,
-        protocolTimeout: 120000,
+        timeout: 180000,
+        protocolTimeout: 180000,
         waitForInitialPage: true,
         handleSIGINT: false,
         handleSIGTERM: false,
-        handleSIGHUP: false
+        handleSIGHUP: false,
+        pipe: true,
+        dumpio: false
     },
     webVersion: '2.2408.52',
     webVersionCache: {
@@ -662,6 +685,9 @@ const lastUserMessage = new Map();
 
 client.on('message', async msg => {
     try {
+        // Add delay at the start of message processing
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
         // Check client state with more detailed logging
         if (!client.pupPage || !client.info) {
             console.log('Client state check failed:');
@@ -671,11 +697,21 @@ client.on('message', async msg => {
             return;
         }
 
-        // Verify page is still connected
-        try {
-            await client.pupPage.evaluate(() => true);
-        } catch (pageError) {
-            console.log('Page evaluation failed, reconnecting...');
+        // Verify page is still connected with retry
+        let pageConnected = false;
+        for (let i = 0; i < 3; i++) {
+            try {
+                await client.pupPage.evaluate(() => true);
+                pageConnected = true;
+                break;
+            } catch (pageError) {
+                console.log(`Page evaluation attempt ${i + 1} failed:`, pageError.message);
+                if (i < 2) await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+        }
+
+        if (!pageConnected) {
+            console.log('Page connection verification failed, reconnecting...');
             await handleReconnect();
             return;
         }
@@ -692,7 +728,7 @@ client.on('message', async msg => {
         const now = Date.now();
         const lastTime = lastUserMessage.get(msg.from) || 0;
         
-        if (now - lastTime < 3000) { // Increased to 3 seconds
+        if (now - lastTime < 5000) { // Increased to 5 seconds
             console.log('Rate limiting response to:', msg.from);
             return;
         }
@@ -706,6 +742,14 @@ client.on('message', async msg => {
         // First handle non-sticker commands to avoid session issues
         if (command.startsWith('!') && command !== '!izin') {
             try {
+                // Add delay before processing command
+                await new Promise(resolve => setTimeout(resolve, 1000));
+
+                // Verify client state again before processing command
+                if (!client.pupPage || !client.info) {
+                    throw new Error('Client state invalid before command processing');
+                }
+
                 switch (command) {
                     case '!software':
                         await retryOperation(() => msg.reply('https://s.id/softwarepraktikum'), 3, 3000);
@@ -902,26 +946,44 @@ async function handleReconnect() {
     console.log(`Attempting to reconnect (attempt ${botState.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
 
     try {
-        // Clean up existing browser/page
-        if (client.pupPage) {
-            await client.pupPage.close().catch(() => {});
-        }
-        if (client.pupBrowser) {
-            await client.pupBrowser.close().catch(() => {});
-        }
-        await client.destroy();
+        // Clean up existing browser/page with timeout
+        const cleanup = async () => {
+            if (client.pupPage) {
+                await Promise.race([
+                    client.pupPage.close().catch(() => {}),
+                    new Promise(resolve => setTimeout(resolve, 5000))
+                ]);
+            }
+            if (client.pupBrowser) {
+                await Promise.race([
+                    client.pupBrowser.close().catch(() => {}),
+                    new Promise(resolve => setTimeout(resolve, 5000))
+                ]);
+            }
+            await Promise.race([
+                client.destroy(),
+                new Promise(resolve => setTimeout(resolve, 5000))
+            ]);
+        };
+
+        await cleanup();
         console.log('Previous client instance destroyed');
 
         // Wait before reconnecting
         await new Promise(resolve => setTimeout(resolve, RECONNECT_INTERVAL));
 
-        // Initialize new client
+        // Initialize new client with verification
         await initializeClient();
         
-        // Verify new connection
+        // Verify new connection with multiple checks
         if (client.pupPage && client.info) {
             try {
-                await client.pupPage.evaluate(() => true);
+                // Multiple verification attempts
+                for (let i = 0; i < 3; i++) {
+                    await client.pupPage.evaluate(() => true);
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+                
                 botState.reconnectAttempts = 0;
                 botState.isReady = true;
                 console.log('Reconnection successful, session restored');
@@ -933,6 +995,8 @@ async function handleReconnect() {
         }
     } catch (error) {
         console.error('Reconnection attempt failed:', error);
+        // Add delay before recursive call
+        await new Promise(resolve => setTimeout(resolve, 5000));
         await handleReconnect();
     }
 }
