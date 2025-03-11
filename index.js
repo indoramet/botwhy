@@ -401,7 +401,7 @@ const client = new Client({
             '--disable-extensions',
             '--disable-web-security',
             '--disable-features=site-per-process,IsolateOrigins',
-            '--window-size=800,600',
+            '--window-size=1280,720',
             '--single-process',
             '--no-zygote',
             '--disable-features=AudioServiceOutOfProcess',
@@ -469,8 +469,8 @@ const client = new Client({
         executablePath: '/usr/bin/chromium',
         browserWSEndpoint: null,
         ignoreHTTPSErrors: true,
-        timeout: 120000,
-        protocolTimeout: 120000,
+        timeout: 180000,
+        protocolTimeout: 180000,
         waitForInitialPage: true,
         handleSIGINT: false,
         handleSIGTERM: false,
@@ -481,14 +481,13 @@ const client = new Client({
         type: 'none'
     },
     restartOnAuthFail: true,
-    qrMaxRetries: 5,
-    authTimeoutMs: 120000,
+    qrMaxRetries: 10,
+    authTimeoutMs: 180000,
     qrTimeoutMs: 60000,
     takeoverOnConflict: true,
     takeoverTimeoutMs: 0,
     bypassCSP: true,
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    linkPreviewApiServers: ['https://preview.whatsapp.com/api/v1/preview']
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
 });
 
 // Track bot state
@@ -566,19 +565,28 @@ client.on('qr', async (qr) => {
         // Clear any existing QR code first
         botState.lastQR = null;
         
-        // Generate new QR code
+        // Generate new QR code with higher quality settings
         const qrImage = await QRCode.toDataURL(qr, {
             errorCorrectionLevel: 'H',
-            margin: 4,
-            scale: 8,
+            margin: 2,
+            scale: 10,
+            width: 512,
             color: {
                 dark: '#000000',
                 light: '#ffffff'
             }
         });
         
-        botState.lastQR = `<img src="${qrImage}" alt="QR Code" style="max-width: 300px; margin: 20px auto;" />
-            <p style="color: #666; margin-top: 10px;">Scan QR code ini dengan WhatsApp Anda.<br>QR code akan diperbarui setiap 20 detik.</p>`;
+        botState.lastQR = `
+            <div style="text-align: center; padding: 20px;">
+                <img src="${qrImage}" alt="QR Code" style="max-width: 512px; width: 100%; height: auto;" />
+                <p style="color: #666; margin-top: 15px; font-size: 16px;">
+                    Buka WhatsApp di ponsel Anda<br>
+                    Ketuk Menu atau Setelan dan pilih WhatsApp Web<br>
+                    Arahkan ponsel Anda ke layar ini untuk memindai kode QR<br>
+                    <span style="color: #ff0000;">QR code akan diperbarui dalam 20 detik jika tidak dipindai</span>
+                </p>
+            </div>`;
         
         io.emit('qr', botState.lastQR);
         console.log('New QR code generated and sent to client');
@@ -588,10 +596,18 @@ client.on('qr', async (qr) => {
             if (!botState.isAuthenticated) {
                 console.log('QR code expired, attempting to regenerate...');
                 try {
-                    // Destroy and reinitialize client to force new QR generation
-                    await client.destroy();
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                    await client.initialize();
+                    // Destroy existing client
+                    await client.destroy().catch(console.error);
+                    
+                    // Clear session data
+                    const sessionsPath = '/app/sessions';
+                    await fs.rm(sessionsPath, { recursive: true, force: true }).catch(() => {});
+                    
+                    // Wait before reinitializing
+                    await new Promise(resolve => setTimeout(resolve, 5000));
+                    
+                    // Initialize new client
+                    await initializeClient();
                 } catch (error) {
                     console.error('Error regenerating QR code:', error);
                 }
@@ -602,8 +618,8 @@ client.on('qr', async (qr) => {
         // Try to recover by reinitializing
         try {
             await client.destroy();
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            await client.initialize();
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            await initializeClient();
         } catch (reinitError) {
             console.error('Failed to recover from QR generation error:', reinitError);
         }
