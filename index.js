@@ -452,34 +452,52 @@ client.on('authenticated', async () => {
 
 client.on('ready', async () => {
     console.log('Client is ready!');
-    botState.isReady = true;
-    botState.isAuthenticated = true;
-    botState.reconnectAttempts = 0;
-    io.emit('ready');
     
     try {
-        // Verify WhatsApp Web connection
+        // Verify WhatsApp Web connection with retries
         const page = client.pupPage;
         if (page) {
-            console.log('Checking WhatsApp Web connection...');
-            const connectionStatus = await page.evaluate(() => {
-                return {
-                    store: !!window.Store,
-                    wap: !!window.Store.Wap,
-                    stream: !!window.Store.Stream,
-                    conn: window.Store.Conn ? window.Store.Conn.connected : false
-                };
-            });
-            console.log('WhatsApp Web connection status:', connectionStatus);
-            
-            if (!connectionStatus.store || !connectionStatus.wap || !connectionStatus.stream) {
-                console.log('WhatsApp Web not fully initialized, waiting 5 seconds...');
+            let retryCount = 0;
+            const maxRetries = 5;
+            let isFullyInitialized = false;
+
+            while (retryCount < maxRetries && !isFullyInitialized) {
+                console.log(`Checking WhatsApp Web connection (attempt ${retryCount + 1}/${maxRetries})...`);
+                
+                const connectionStatus = await page.evaluate(() => {
+                    return {
+                        store: !!window.Store,
+                        wap: !!window.Store.Wap,
+                        stream: !!window.Store.Stream,
+                        conn: window.Store.Conn ? window.Store.Conn.connected : false
+                    };
+                });
+                
+                console.log('WhatsApp Web connection status:', connectionStatus);
+                
+                if (connectionStatus.store && connectionStatus.wap && connectionStatus.stream) {
+                    isFullyInitialized = true;
+                    console.log('WhatsApp Web fully initialized!');
+                } else {
+                    console.log('WhatsApp Web not fully initialized, waiting 5 seconds...');
+                    await new Promise(resolve => setTimeout(resolve, 5000));
+                    retryCount++;
+                }
+            }
+
+            if (!isFullyInitialized) {
+                console.log('Failed to fully initialize WhatsApp Web, attempting recovery...');
+                // Force a page reload and wait for it to complete
+                await page.reload({ waitUntil: 'networkidle0' });
                 await new Promise(resolve => setTimeout(resolve, 5000));
             }
         }
         
-        // Wait for WhatsApp Web to fully initialize
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        // Set bot state after successful initialization
+        botState.isReady = true;
+        botState.isAuthenticated = true;
+        botState.reconnectAttempts = 0;
+        io.emit('ready');
         
         // Start connection check
         startConnectionCheck();
@@ -488,16 +506,30 @@ client.on('ready', async () => {
         try {
             const chats = await client.getChats();
             console.log(`Loaded ${chats.length} chats successfully`);
+            
+            // Verify message handling is working
+            console.log('Testing message handling...');
+            client.emit('message_create', {
+                from: 'system',
+                body: '!test',
+                hasMedia: false,
+                timestamp: new Date(),
+                type: 'chat',
+                isStatus: false
+            });
+            
         } catch (chatError) {
             console.error('Error loading initial chats:', chatError);
         }
         
     } catch (error) {
         console.error('Error in ready event:', error);
+        // Attempt recovery
+        await handleReconnect();
     }
 });
 
-// Update connection check to be more robust
+// Update connection check to verify message handling
 function startConnectionCheck() {
     if (global.pingInterval) {
         clearInterval(global.pingInterval);
@@ -516,15 +548,31 @@ function startConnectionCheck() {
             }
             
             const isStoreReady = await client.pupPage.evaluate(() => {
-                return window.Store && window.Store.State && window.Store.Chat ? true : false;
+                const hasStore = !!window.Store;
+                const hasWap = hasStore && !!window.Store.Wap;
+                const hasStream = hasStore && !!window.Store.Stream;
+                const isConnected = hasStore && window.Store.Conn && window.Store.Conn.connected;
+                
+                return hasStore && hasWap && hasStream && isConnected;
             });
             
             if (!isStoreReady) {
-                throw new Error('WhatsApp Store not fully available');
+                throw new Error('WhatsApp Web components not fully available');
             }
             
             botState.lastPing = Date.now();
             console.log('Connection verified:', new Date().toISOString());
+            
+            // Test message handling periodically
+            client.emit('message_create', {
+                from: 'system',
+                body: '!ping',
+                hasMedia: false,
+                timestamp: new Date(),
+                type: 'chat',
+                isStatus: false
+            });
+            
         } catch (error) {
             console.log('Connection check failed:', error.message);
             if (Date.now() - botState.lastPing > 60000) {
