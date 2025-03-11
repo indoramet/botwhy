@@ -663,27 +663,75 @@ let activeSocket = null;
 
 const lastUserMessage = new Map();
 
+// Add heartbeat mechanism and state monitoring
+let lastHeartbeat = Date.now();
+let isClientHealthy = true;
+
+// Monitor client health
+setInterval(async () => {
+    try {
+        if (!client.info || Date.now() - lastHeartbeat > 30000) { // 30 seconds threshold
+            console.log('\n=== Client Health Check ===');
+            console.log('Client appears unresponsive');
+            console.log('Last heartbeat:', new Date(lastHeartbeat).toISOString());
+            console.log('Current state:', botState);
+            
+            isClientHealthy = false;
+            
+            // Try to recover client
+            try {
+                const state = await client.getState();
+                console.log('Current WhatsApp state:', state);
+                
+                if (state === 'CONNECTED') {
+                    console.log('Client is connected but unresponsive, attempting recovery...');
+                    await handleReconnect();
+                } else {
+                    console.log('Client is disconnected, initiating reconnection...');
+                    await handleReconnect();
+                }
+            } catch (error) {
+                console.error('Error checking client state:', error);
+                await handleReconnect();
+            }
+        } else {
+            isClientHealthy = true;
+        }
+    } catch (error) {
+        console.error('Error in health check:', error);
+        isClientHealthy = false;
+    }
+}, 30000); // Check every 30 seconds
+
 client.on('message', async msg => {
     try {
+        // Update heartbeat on message received
+        lastHeartbeat = Date.now();
+        
         console.log('\n=== New Message Received ===');
         console.log('From:', msg.from);
         console.log('Body:', msg.body);
         console.log('Type:', msg.type);
         console.log('Timestamp:', new Date().toISOString());
+        console.log('Client health status:', isClientHealthy ? '✅ Healthy' : '❌ Unhealthy');
+        console.log('Last heartbeat:', new Date(lastHeartbeat).toISOString());
 
         // Check client state
-        if (!client.info) {
-            console.log('❌ Client info not available');
+        if (!client.info || !isClientHealthy) {
+            console.log('❌ Client info not available or client unhealthy');
             console.log('Current bot state:', {
                 isReady: botState.isReady,
                 isAuthenticated: botState.isAuthenticated,
-                reconnectAttempts: botState.reconnectAttempts
+                reconnectAttempts: botState.reconnectAttempts,
+                isHealthy: isClientHealthy
             });
             
             // Try to recover client state
             try {
                 await client.getState();
                 console.log('Client state recovered');
+                lastHeartbeat = Date.now();
+                isClientHealthy = true;
             } catch (stateError) {
                 console.error('Failed to recover client state:', stateError);
                 await handleReconnect();
@@ -868,6 +916,7 @@ client.on('message', async msg => {
         }
     } catch (error) {
         console.error('❌ Critical error in message handler:', error);
+        isClientHealthy = false;
         try {
             await msg.reply('Terjadi kesalahan sistem. Mohon coba beberapa saat lagi.');
         } catch (replyError) {
@@ -977,73 +1026,6 @@ async function initializeClient() {
         console.error('Failed to initialize client:', error);
         throw error;
     }
-}
-
-// Add reconnection handler
-async function handleReconnect() {
-    const MAX_RECONNECT_ATTEMPTS = 5;
-    const RECONNECT_INTERVAL = 30000; // 30 seconds
-
-    if (!botState.reconnectAttempts) {
-        botState.reconnectAttempts = 0;
-    }
-
-    if (botState.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-        console.log('Max reconnection attempts reached, restarting process...');
-        try {
-            await client.destroy();
-        } catch (error) {
-            console.error('Error destroying client during restart:', error);
-        }
-        process.exit(1);
-    }
-
-    botState.reconnectAttempts++;
-    console.log(`Attempting to reconnect (attempt ${botState.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
-
-    try {
-        // First try to destroy the existing client
-        try {
-            await client.destroy();
-            console.log('Previous client instance destroyed');
-        } catch (error) {
-            console.error('Error destroying previous client instance:', error);
-        }
-
-        // Clear any existing sessions if we're having persistent issues
-        if (botState.reconnectAttempts > 2) {
-            try {
-                const sessionsPath = '/app/sessions';
-                const browserDataPath = path.join(sessionsPath, 'bot-whatsapp/Default');
-                await fs.rm(browserDataPath, { recursive: true, force: true }).catch(() => {});
-                console.log('Cleared browser data for fresh start');
-            } catch (error) {
-                console.error('Error clearing browser data:', error);
-            }
-        }
-
-        // Wait before attempting to reconnect
-        console.log(`Waiting ${RECONNECT_INTERVAL/1000} seconds before reconnecting...`);
-        await new Promise(resolve => setTimeout(resolve, RECONNECT_INTERVAL));
-
-        // Initialize new client
-        console.log('Initializing new client...');
-        await initializeClient();
-        
-        // If we get here, reset the reconnect counter
-        if (client.info) {
-            console.log('Reconnection successful!');
-            botState.reconnectAttempts = 0;
-            botState.isReady = true;
-            botState.isAuthenticated = true;
-            return true;
-        }
-    } catch (error) {
-        console.error('Reconnection attempt failed:', error);
-        // Try again recursively
-        return await handleReconnect();
-    }
-    return false;
 }
 
 // Update the startBot function
