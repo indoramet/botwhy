@@ -437,21 +437,22 @@ io.on('connection', (socket) => {
 
 // Update client event handlers
 client.on('qr', async (qr) => {
-    console.log('QR RECEIVED, checking authentication state...');
+    console.log('QR RECEIVED, generating QR code...');
     
-    // Double check authentication state
-    if (botState.isAuthenticated || botState.isReady) {
-        console.log('Already authenticated, ignoring QR code');
-        return;
-    }
-
     try {
+        console.log('Converting QR code to image...');
         const qrImage = await QRCode.toDataURL(qr);
+        console.log('QR code converted to image successfully');
+        
         botState.lastQR = `<img src="${qrImage}" alt="QR Code" />`;
+        console.log('Emitting QR code to all connected clients...');
         io.emit('qr', botState.lastQR);
-        console.log('QR code emitted to client');
+        console.log('QR code emitted successfully');
+        
+        // Also log the raw QR string for debugging
+        console.log('Raw QR Code:', qr);
     } catch (err) {
-        console.error('Error generating QR code:', err);
+        console.error('Error in QR code generation:', err);
     }
 });
 
@@ -1083,46 +1084,49 @@ async function initializeClient() {
         // Initialize the client with retry logic
         let initAttempts = 0;
         const maxInitAttempts = 3;
-        let qrReceived = false;
 
         while (initAttempts < maxInitAttempts) {
             try {
                 console.log(`Attempting to initialize client (attempt ${initAttempts + 1}/${maxInitAttempts})...`);
                 
-                // Set up QR event handler before initialization
-                const qrPromise = new Promise(resolve => {
+                // Set up promise for QR code generation
+                const qrPromise = new Promise((resolve) => {
                     const qrHandler = async (qr) => {
-                        console.log('QR Code received');
-                        qrReceived = true;
+                        console.log('QR event received in promise');
                         try {
                             const qrImage = await QRCode.toDataURL(qr);
                             botState.lastQR = `<img src="${qrImage}" alt="QR Code" />`;
                             io.emit('qr', botState.lastQR);
-                            console.log('QR code emitted to client');
+                            console.log('QR code emitted from promise');
                             resolve();
                         } catch (err) {
-                            console.error('Error generating QR code:', err);
+                            console.error('Error in QR promise:', err);
                         }
                     };
+                    
                     client.once('qr', qrHandler);
                 });
 
-                // Start initialization
+                // Set up promise for authentication
+                const authPromise = new Promise((resolve) => {
+                    client.once('authenticated', () => {
+                        console.log('Authentication successful');
+                        resolve();
+                    });
+                });
+
+                // Start the initialization
+                console.log('Starting client initialization...');
                 const initPromise = client.initialize();
-                
-                // Wait for either QR code or successful initialization
+
+                // Wait for either QR code or authentication
+                console.log('Waiting for QR code or authentication...');
                 await Promise.race([
-                    initPromise,
                     qrPromise,
-                    // No timeout here - we'll wait for QR or success
+                    authPromise,
+                    initPromise
                 ]);
-                
-                if (qrReceived) {
-                    console.log('QR code has been generated and emitted');
-                    // Wait for authentication indefinitely
-                    await initPromise;
-                }
-                
+
                 console.log('Client initialized successfully');
                 break;
             } catch (initError) {
@@ -1135,12 +1139,12 @@ async function initializeClient() {
 
                 // Clean up between attempts
                 try {
+                    console.log('Cleaning up failed attempt...');
                     await client.destroy().catch(() => {});
                     await fs.rm(sessionsPath, { recursive: true, force: true });
                     await fs.mkdir(sessionsPath, { recursive: true });
                     console.log('Reset sessions for retry');
                     
-                    // Wait between retries
                     console.log('Waiting 10 seconds before next attempt...');
                     await new Promise(resolve => setTimeout(resolve, 10000));
                 } catch (error) {
