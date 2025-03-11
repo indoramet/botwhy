@@ -503,7 +503,9 @@ const client = new Client({
             '--disable-webrtc',
             '--disable-websecurity',
             '--disable-xss-auditor',
-            '--no-startup-window'
+            '--no-startup-window',
+            '--enable-precise-memory-info',
+            '--js-flags="--max-old-space-size=2048"'
         ],
         defaultViewport: {
             width: 1280,
@@ -523,7 +525,7 @@ const client = new Client({
         handleSIGTERM: false,
         handleSIGHUP: false,
         pipe: true,
-        dumpio: false,
+        dumpio: true,
         userDataDir: null
     },
     webVersion: '2.2408.52',
@@ -531,9 +533,9 @@ const client = new Client({
         type: 'none'
     },
     restartOnAuthFail: true,
-    qrMaxRetries: 0,
+    qrMaxRetries: 5,
     authTimeoutMs: 0,
-    qrTimeoutMs: 0,
+    qrTimeoutMs: 60000,
     takeoverOnConflict: true,
     takeoverTimeoutMs: 0,
     bypassCSP: true,
@@ -607,13 +609,41 @@ client.on('qr', async (qr) => {
         console.log('QR received while authenticated, ignoring...');
         return;
     }
-    console.log('QR RECEIVED');
+    console.log('QR RECEIVED - Generating QR code...');
     try {
-        const qrImage = await QRCode.toDataURL(qr);
-        botState.lastQR = `<img src="${qrImage}" alt="QR Code" />`;
+        // Add delay before generating QR
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        const qrImage = await QRCode.toDataURL(qr, {
+            errorCorrectionLevel: 'H',
+            margin: 4,
+            scale: 8,
+            width: 512
+        });
+        console.log('QR code generated successfully');
+        botState.lastQR = `<img src="${qrImage}" alt="QR Code" style="width: 512px; height: 512px;" />`;
         io.emit('qr', botState.lastQR);
+        
+        // Log QR code status
+        console.log('QR code emitted to all connected clients');
+        console.log('Waiting for scan...');
     } catch (err) {
         console.error('Error generating QR code:', err);
+        // Try to regenerate QR after error
+        setTimeout(async () => {
+            try {
+                const retryQrImage = await QRCode.toDataURL(qr, {
+                    errorCorrectionLevel: 'H',
+                    margin: 4,
+                    scale: 8,
+                    width: 512
+                });
+                botState.lastQR = `<img src="${retryQrImage}" alt="QR Code" style="width: 512px; height: 512px;" />`;
+                io.emit('qr', botState.lastQR);
+            } catch (retryErr) {
+                console.error('Retry QR generation failed:', retryErr);
+            }
+        }, 2000);
     }
 });
 
@@ -923,6 +953,11 @@ async function initializeClient() {
     try {
         console.log('Starting WhatsApp client initialization...');
         
+        // Reset bot state
+        botState.isReady = false;
+        botState.isAuthenticated = false;
+        botState.lastQR = null;
+        
         // Ensure sessions directory exists
         const sessionsPath = '/app/sessions';
         try {
@@ -943,21 +978,27 @@ async function initializeClient() {
                 
                 // Clean up any existing browser instances
                 if (client.pupBrowser) {
+                    console.log('Closing existing browser instance...');
                     await client.pupBrowser.close().catch(() => {});
                 }
                 
                 // Wait before initialization
+                console.log('Waiting before initialization...');
                 await new Promise(resolve => setTimeout(resolve, 5000));
                 
+                // Initialize with detailed logging
+                console.log('Starting client initialization...');
                 await client.initialize();
+                console.log('Client initialization completed');
                 
                 // Verify initialization
                 if (!client.pupPage || !client.info) {
-                    throw new Error('Client initialization incomplete');
+                    throw new Error('Client initialization incomplete - missing page or info');
                 }
                 
                 // Test page connection
                 await client.pupPage.evaluate(() => true);
+                console.log('Page connection verified');
                 
                 console.log('Client initialized successfully');
                 break;
@@ -970,6 +1011,7 @@ async function initializeClient() {
                 }
 
                 // Wait longer before retrying
+                console.log(`Waiting ${10} seconds before retry...`);
                 await new Promise(resolve => setTimeout(resolve, 10000));
             }
         }
