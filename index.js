@@ -660,22 +660,6 @@ client.on('message', async msg => {
             return;
         }
 
-        const isGroup = Boolean(chat?.isGroup);
-        const botNumber = client.info.wid._serialized;
-        
-        // Ensure mentionedJidList is an array
-        const mentionedIds = Array.isArray(msg._data?.mentionedJidList) ? msg._data.mentionedJidList : [];
-        
-        console.log('Message details:', {
-            from: msg.from,
-            body: msg.body,
-            isGroup: isGroup,
-            chatName: chat?.name,
-            mentionedIds: mentionedIds,
-            botNumber: botNumber,
-            hasAtBot: msg.body.toLowerCase().includes('@bot')
-        });
-
         // Rate limiting check
         const now = Date.now();
         const lastTime = lastUserMessage.get(msg.from) || 0;
@@ -696,7 +680,8 @@ client.on('message', async msg => {
             });
         }
 
-        const command = msg.body.toLowerCase();
+        const command = msg.body.toLowerCase().trim();
+        console.log('Processing command:', command);
 
         // Check for admin commands first
         if (await handleAdminCommand(msg)) {
@@ -704,43 +689,10 @@ client.on('message', async msg => {
             return;
         }
 
-        // Determine if we should process the command
-        let shouldProcessCommand = false;
-        if (!isGroup) {
-            // Always process commands in private chats
-            shouldProcessCommand = true;
-        } else {
-            // In groups, check for bot mention or @bot
-            const isBotMentioned = mentionedIds.includes(botNumber);
-            const hasAtBot = command.includes('@bot');
-            shouldProcessCommand = isBotMentioned || hasAtBot;
-        }
-
-        console.log('Command processing decision:', {
-            isGroup: isGroup,
-            shouldProcess: shouldProcessCommand,
-            isBotMentioned: mentionedIds.includes(botNumber),
-            hasAtBot: command.includes('@bot')
-        });
-
-        if (shouldProcessCommand) {
-            // Clean the command
-            let cleanCommand = command;
-            if (isGroup) {
-                // Remove bot mentions
-                if (botNumber) {
-                    const botNumberWithoutSuffix = botNumber.split('@')[0];
-                    cleanCommand = cleanCommand.replace(new RegExp(`@${botNumberWithoutSuffix}\\s*`, 'g'), '');
-                }
-                cleanCommand = cleanCommand.replace(/@bot\s*/gi, '');
-                cleanCommand = cleanCommand.trim();
-            }
-            
-            console.log('Processing cleaned command:', cleanCommand);
-
+        // Process any message that starts with ! regardless of chat type
+        if (command.startsWith('!')) {
             try {
-                // Handle commands
-                if (cleanCommand === '!help' || cleanCommand === '!bantuan') {
+                if (command === '!help' || command === '!bantuan') {
                     await msg.reply(`Daftar perintah yang tersedia:
 !jadwal - Informasi jadwal praktikum
 !laporan - Cara upload laporan
@@ -752,7 +704,7 @@ client.on('message', async msg => {
 !template - Link template laporan
 !tugasakhir - Informasi tugas akhir`);
                 }
-                else if (cleanCommand === '!izin') {
+                else if (command === '!izin') {
                     await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
                     try {
                         const stickerPath = path.join(__dirname, 'public', 'assets', 'stickers', 'izin.jpeg');
@@ -762,42 +714,40 @@ client.on('message', async msg => {
                         await msg.reply('Maaf, terjadi kesalahan saat mengirim sticker. Pesan izin tetap tercatat.');
                     }
                 }
-                else if (cleanCommand === '!software') {
+                else if (command === '!software') {
                     await msg.reply('https://s.id/softwarepraktikum');
                 }
-                else if (cleanCommand === '!template') {
+                else if (command === '!template') {
                     await msg.reply('https://s.id/templatebdX');
                 }
-                else if (cleanCommand === '!asistensi') {
+                else if (command === '!asistensi') {
                     await msg.reply('Untuk melihat jadwal asistensi gunakan command !asistensi1 sampai !asistensi7 sesuai dengan pertemuan yang ingin dilihat');
                 }
-                else if (cleanCommand === '!tugasakhir') {
+                else if (command === '!tugasakhir') {
                     await msg.reply(dynamicCommands.tugasakhir);
                 }
-                else if (cleanCommand.startsWith('!asistensi') && /^!asistensi[1-7]$/.test(cleanCommand)) {
-                    await msg.reply(dynamicCommands[cleanCommand.substring(1)]);
+                else if (command.startsWith('!asistensi') && /^!asistensi[1-7]$/.test(command)) {
+                    await msg.reply(dynamicCommands[command.substring(1)]);
                 }
-                else if (cleanCommand === '!jadwal' || cleanCommand === 'kapan praktikum?') {
+                else if (command === '!jadwal' || command === 'kapan praktikum?') {
                     await msg.reply(dynamicCommands.jadwal);
                 }
-                else if (cleanCommand === '!nilai' || cleanCommand === 'nilai praktikum?') {
+                else if (command === '!nilai' || command === 'nilai praktikum?') {
                     await msg.reply(dynamicCommands.nilai);
                 }
-                else if (cleanCommand === '!sesi' || cleanCommand === 'sesi praktikum?') {
+                else if (command === '!sesi' || command === 'sesi praktikum?') {
                     await msg.reply('Praktikum sesi satu : 15:15 - 16:05\nPraktikum sesi dua : 16:10 - 17:00\nPraktikum sesi tiga : 20:00 - 20:50');
                 }
-                else if (cleanCommand === '!laporan' || cleanCommand === 'bagaimana cara upload laporan?') {
+                else if (command === '!laporan' || command === 'bagaimana cara upload laporan?') {
                     await msg.reply('Untuk mengupload laporan:\n1. ubah file word laporan menjadi pdf\n2. cek link upload laporan sesuai dengan pertemuan ke berapa command contoh !laporan1\n3. klik link upload laporan\n4. upload laporan\n5. Tunggu sampai kelar\nJANGAN SAMPAI MENGUMPULKAN LAPORAN TERLAMBAT -5%!!!');
                 }
-                else if (cleanCommand.startsWith('!laporan') && /^!laporan[1-7]$/.test(cleanCommand)) {
-                    await msg.reply(dynamicCommands[cleanCommand.substring(1)]);
+                else if (command.startsWith('!laporan') && /^!laporan[1-7]$/.test(command)) {
+                    await msg.reply(dynamicCommands[command.substring(1)]);
                 }
             } catch (cmdError) {
                 console.error('Command execution error:', cmdError);
                 await msg.reply('Maaf, terjadi kesalahan dalam memproses perintah. Silakan coba lagi.');
             }
-        } else if (isGroup && command.startsWith('!')) {
-            await msg.reply('Untuk menggunakan bot di grup, mohon mention bot terlebih dahulu.\nContoh: @bot !help');
         }
     } catch (error) {
         console.error('Critical error in message handler:', error);
