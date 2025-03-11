@@ -340,7 +340,7 @@ const client = new Client({
         timeout: 120000,
         protocolTimeout: 120000
     },
-    webVersion: '2.2408.52',
+    webVersion: '2.2429.7',
     restartOnAuthFail: true,
     qrMaxRetries: 5,
     authTimeoutMs: 120000,
@@ -464,32 +464,49 @@ client.on('ready', async () => {
             while (retryCount < maxRetries && !isFullyInitialized) {
                 console.log(`Checking WhatsApp Web connection (attempt ${retryCount + 1}/${maxRetries})...`);
                 
-                const connectionStatus = await page.evaluate(() => {
-                    return {
-                        store: !!window.Store,
-                        wap: !!window.Store.Wap,
-                        stream: !!window.Store.Stream,
-                        conn: window.Store.Conn ? window.Store.Conn.connected : false
-                    };
-                });
-                
-                console.log('WhatsApp Web connection status:', connectionStatus);
-                
-                if (connectionStatus.store && connectionStatus.wap && connectionStatus.stream) {
-                    isFullyInitialized = true;
-                    console.log('WhatsApp Web fully initialized!');
-                } else {
-                    console.log('WhatsApp Web not fully initialized, waiting 5 seconds...');
+                try {
+                    // Force reload WhatsApp Web scripts
+                    await page.evaluate(() => {
+                        window.Store = undefined;
+                        window.WebSocket = undefined;
+                        location.reload();
+                    });
+                    
+                    // Wait for network to be idle
+                    await page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 });
+                    
+                    // Wait for WhatsApp Web to initialize
                     await new Promise(resolve => setTimeout(resolve, 5000));
-                    retryCount++;
+                    
+                    const connectionStatus = await page.evaluate(() => {
+                        return {
+                            store: !!window.Store,
+                            wap: !!window.Store?.Wap,
+                            stream: !!window.Store?.Stream,
+                            conn: !!window.Store?.Conn?.connected
+                        };
+                    });
+                    
+                    console.log('WhatsApp Web connection status:', connectionStatus);
+                    
+                    if (connectionStatus.store && connectionStatus.wap && connectionStatus.stream) {
+                        isFullyInitialized = true;
+                        console.log('WhatsApp Web fully initialized!');
+                        break;
+                    }
+                } catch (error) {
+                    console.error('Error during initialization attempt:', error);
                 }
+                
+                console.log('WhatsApp Web not fully initialized, waiting 10 seconds...');
+                await new Promise(resolve => setTimeout(resolve, 10000));
+                retryCount++;
             }
 
             if (!isFullyInitialized) {
-                console.log('Failed to fully initialize WhatsApp Web, attempting recovery...');
-                // Force a page reload and wait for it to complete
-                await page.reload({ waitUntil: 'networkidle0' });
-                await new Promise(resolve => setTimeout(resolve, 5000));
+                console.log('Failed to fully initialize WhatsApp Web, attempting full restart...');
+                await handleReconnect();
+                return;
             }
         }
         
@@ -507,24 +524,18 @@ client.on('ready', async () => {
             const chats = await client.getChats();
             console.log(`Loaded ${chats.length} chats successfully`);
             
-            // Verify message handling is working
+            // Send a test message to verify everything is working
             console.log('Testing message handling...');
-            client.emit('message_create', {
-                from: 'system',
-                body: '!test',
-                hasMedia: false,
-                timestamp: new Date(),
-                type: 'chat',
-                isStatus: false
-            });
+            await client.sendMessage('status@broadcast', 'Bot initialized successfully');
+            console.log('Test message sent successfully');
             
         } catch (chatError) {
             console.error('Error loading initial chats:', chatError);
+            await handleReconnect();
         }
         
     } catch (error) {
         console.error('Error in ready event:', error);
-        // Attempt recovery
         await handleReconnect();
     }
 });
