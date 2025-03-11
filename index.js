@@ -145,22 +145,40 @@ async function handleAdminCommand(msg) {
     const sender = msg.from;
     
     if (!ADMIN_NUMBERS.includes(sender)) {
+        console.log('Non-admin user attempted admin command:', sender);
         return false;
     }
 
     const command = msg.body.toLowerCase();
     const parts = msg.body.split(' ');
 
-    if (command.startsWith('!update ')) {
+    console.log('Processing admin command:', command);
+    console.log('Command parts:', parts);
+
+    if (command.startsWith('!update')) {
+        console.log('Update command detected');
+        
+        if (parts.length < 3) {
+            await msg.reply('❌ Format: !update <command> <new value>');
+            return true;
+        }
+
         const commandToUpdate = parts[1].toLowerCase();
         const newValue = parts.slice(2).join(' ');
         
+        console.log('Attempting to update command:', commandToUpdate);
+        console.log('New value:', newValue);
+        
         if (dynamicCommands.hasOwnProperty(commandToUpdate)) {
+            const oldValue = dynamicCommands[commandToUpdate];
             dynamicCommands[commandToUpdate] = newValue;
-            await msg.reply(`✅ Command ${commandToUpdate} has been updated to: ${newValue}`);
+            await msg.reply(`✅ Command ${commandToUpdate} has been updated:\nOld: ${oldValue}\nNew: ${newValue}`);
+            console.log(`Successfully updated ${commandToUpdate} command`);
             return true;
         } else {
-            await msg.reply('❌ Invalid command name. Available commands: ' + Object.keys(dynamicCommands).join(', '));
+            const availableCommands = Object.keys(dynamicCommands).join(', ');
+            await msg.reply(`❌ Invalid command name: ${commandToUpdate}\nAvailable commands: ${availableCommands}`);
+            console.log('Invalid command update attempt:', commandToUpdate);
             return true;
         }
     }
@@ -222,15 +240,17 @@ async function handleAdminCommand(msg) {
     }
 
     // Show all current values
-    if (command === '!showcommands') {
+    else if (command === '!showcommands') {
         let response = '*Current Command Values:*\n\n';
         for (const [cmd, value] of Object.entries(dynamicCommands)) {
             response += `*${cmd}:* ${value}\n`;
         }
         await msg.reply(response);
+        console.log('Showing all command values');
         return true;
     }
 
+    console.log('No matching admin command found');
     return false;
 }
 
