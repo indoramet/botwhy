@@ -631,6 +631,12 @@ const lastUserMessage = new Map();
 
 client.on('message', async msg => {
     try {
+        // Wait for client to be ready
+        if (!client.info) {
+            console.log('Client info not yet available, waiting...');
+            return;
+        }
+
         // Get chat before anything else
         const chat = await msg.getChat();
         const isGroup = Boolean(chat.isGroup);
@@ -638,12 +644,15 @@ client.on('message', async msg => {
         // Get bot's ID from client info
         const botNumber = client.info.wid._serialized;
         
+        // Get mentioned IDs from the message
+        const mentionedIds = msg._data?.mentionedJidList || [];
+        
         console.log('Received message:', {
             from: msg.from,
             body: msg.body,
             isGroup: isGroup,
-            mentionedIds: Array.isArray(msg.mentionedIds) ? msg.mentionedIds : [],
-            botNumber: botNumber // Log bot number for debugging
+            mentionedIds: mentionedIds,
+            botNumber: botNumber
         });
 
         const now = Date.now();
@@ -689,14 +698,16 @@ client.on('message', async msg => {
         // Process commands for both private chats and group chats
         const shouldProcessCommand = !isGroup || 
             (isGroup && (
-                msg.mentionedIds?.includes(botNumber) ||
+                mentionedIds.includes(botNumber) ||
                 msg.body.toLowerCase().includes('@bot')
             ));
 
         console.log('Should process command:', shouldProcessCommand, {
             isGroup: isGroup,
-            hasBotMention: msg.mentionedIds?.includes(botNumber),
-            hasAtBot: msg.body.toLowerCase().includes('@bot')
+            hasBotMention: mentionedIds.includes(botNumber),
+            hasAtBot: msg.body.toLowerCase().includes('@bot'),
+            mentionedIds: mentionedIds,
+            botNumber: botNumber
         });
 
         if (shouldProcessCommand) {
