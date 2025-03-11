@@ -699,101 +699,41 @@ client.on('message', async msg => {
 
         lastUserMessage.set(msg.from, now);
 
-        if (activeSocket) {
-            activeSocket.emit('message', {
-                from: msg.from,
-                body: msg.body,
-                time: moment().format('HH:mm:ss')
-            });
-        }
-
-        // Check for admin commands first
-        if (await handleAdminCommand(msg)) {
-            console.log('Admin command handled');
-            return;
-        }
-
+        // Process commands
         const command = msg.body.toLowerCase();
         console.log('Processing command:', command);
 
-        // Process commands for both private and group chats if they start with !
-        if (command.startsWith('!')) {
-            console.log('Processing command in chat:', command);
-            
+        // First handle non-sticker commands to avoid session issues
+        if (command.startsWith('!') && command !== '!izin') {
             try {
-                // Process !izin command with enhanced error handling
-                if (command === '!izin') {
-                    console.log('Processing !izin command');
-                    try {
-                        // Send text response first with longer timeout
-                        await retryOperation(async () => {
-                            await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
-                        }, 5, 3000); // 5 retries, 3 second delay
-                        
-                        // Add longer delay before sticker
-                        await new Promise(resolve => setTimeout(resolve, 3000));
-                        
-                        const stickerPath = path.join(__dirname, 'public', 'assets', 'stickers', 'izin.jpeg');
-                        
-                        // Verify client is still connected before sending sticker
-                        if (!client.pupPage || !client.info) {
-                            throw new Error('Client disconnected before sending sticker');
-                        }
-                        
-                        try {
-                            await sendStickerFromFile(msg, stickerPath);
-                            console.log('Sticker sent successfully');
-                            
-                            // Add longer delay after sending sticker
-                            await new Promise(resolve => setTimeout(resolve, 3000));
-                        } catch (stickerError) {
-                            console.error('Failed to send sticker:', stickerError);
-                            if (stickerError.message.includes('Session closed')) {
-                                await handleReconnect();
-                            } else {
-                                await retryOperation(async () => {
-                                    await msg.reply('Maaf, terjadi kesalahan saat mengirim sticker. Pesan izin tetap tercatat.');
-                                }, 5, 3000);
-                            }
-                        }
-                    } catch (error) {
-                        console.error('Error in !izin command:', error);
-                        if (error.message.includes('Session closed') || error.message.includes('Target closed')) {
-                            await handleReconnect();
-                        }
-                    }
-                    return;
-                }
-
-                // Handle other commands with retry logic
                 switch (command) {
                     case '!software':
-                        await retryOperation(() => msg.reply('https://s.id/softwarepraktikum'));
+                        await retryOperation(() => msg.reply('https://s.id/softwarepraktikum'), 3, 3000);
                         break;
                     case '!template':
-                        await retryOperation(() => msg.reply('https://s.id/templatebdX'));
+                        await retryOperation(() => msg.reply('https://s.id/templatebdX'), 3, 3000);
                         break;
                     case '!asistensi':
-                        await retryOperation(() => msg.reply('Untuk melihat jadwal asistensi gunakan command !asistensi1 sampai !asistensi7 sesuai dengan pertemuan yang ingin dilihat'));
+                        await retryOperation(() => msg.reply('Untuk melihat jadwal asistensi gunakan command !asistensi1 sampai !asistensi7 sesuai dengan pertemuan yang ingin dilihat'), 3, 3000);
                         break;
                     case '!tugasakhir':
-                        await retryOperation(() => msg.reply(dynamicCommands.tugasakhir));
+                        await retryOperation(() => msg.reply(dynamicCommands.tugasakhir), 3, 3000);
                         break;
                     case '!jadwal':
                     case 'kapan praktikum?':
-                        await retryOperation(() => msg.reply(dynamicCommands.jadwal));
+                        await retryOperation(() => msg.reply(dynamicCommands.jadwal), 3, 3000);
                         break;
                     case '!nilai':
                     case 'nilai praktikum?':
-                        await retryOperation(() => msg.reply(dynamicCommands.nilai));
+                        await retryOperation(() => msg.reply(dynamicCommands.nilai), 3, 3000);
                         break;
                     case '!sesi':
                     case 'sesi praktikum?':
-                        await retryOperation(() => msg.reply('Praktikum sesi satu : 15:15 - 16:05\nPraktikum sesi dua : 16:10 - 17:00\nPraktikum sesi tiga : 20:00 - 20:50'));
+                        await retryOperation(() => msg.reply('Praktikum sesi satu : 15:15 - 16:05\nPraktikum sesi dua : 16:10 - 17:00\nPraktikum sesi tiga : 20:00 - 20:50'), 3, 3000);
                         break;
                     case '!laporan':
                     case 'bagaimana cara upload laporan?':
-                        await retryOperation(() => msg.reply('Untuk mengupload laporan:\n1. ubah file word laporan menjadi pdf\n2. cek link upload laporan sesuai dengan pertemuan ke berapa command contoh !laporan1\n3. klik link upload laporan\n4. upload laporan\n5. Tunggu sampai kelar\nJANGAN SAMPAI MENGUMPULKAN LAPORAN TERLAMBAT -5%!!!'));
+                        await retryOperation(() => msg.reply('Untuk mengupload laporan:\n1. ubah file word laporan menjadi pdf\n2. cek link upload laporan sesuai dengan pertemuan ke berapa command contoh !laporan1\n3. klik link upload laporan\n4. upload laporan\n5. Tunggu sampai kelar\nJANGAN SAMPAI MENGUMPULKAN LAPORAN TERLAMBAT -5%!!!'), 3, 3000);
                         break;
                     case '!help':
                     case '!bantuan':
@@ -806,26 +746,64 @@ client.on('message', async msg => {
 !asistensi - Informasi jadwal asistensi
 !software - Link download software praktikum
 !template - Link template laporan
-!tugasakhir - Informasi tugas akhir`));
+!tugasakhir - Informasi tugas akhir`), 3, 3000);
                         break;
                     default:
                         if (command.startsWith('!asistensi') && /^!asistensi[1-7]$/.test(command)) {
-                            await retryOperation(() => msg.reply(dynamicCommands[command.substring(1)]));
+                            await retryOperation(() => msg.reply(dynamicCommands[command.substring(1)]), 3, 3000);
                         } else if (command.startsWith('!laporan') && /^!laporan[1-7]$/.test(command)) {
-                            await retryOperation(() => msg.reply(dynamicCommands[command]));
+                            await retryOperation(() => msg.reply(dynamicCommands[command]), 3, 3000);
                         }
                         break;
                 }
             } catch (cmdError) {
                 console.error('Error executing command:', cmdError);
+                if (cmdError.message.includes('Session closed') || cmdError.message.includes('Target closed')) {
+                    await handleReconnect();
+                } else {
+                    await retryOperation(() => msg.reply('Maaf, terjadi kesalahan dalam memproses perintah. Silakan coba lagi.'), 3, 3000);
+                }
+            }
+            return;
+        }
+
+        // Handle !izin command separately
+        if (command === '!izin') {
+            console.log('Processing !izin command');
+            try {
+                // Send text first
+                await retryOperation(async () => {
+                    await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
+                }, 3, 3000);
+
+                // Wait longer before attempting sticker
+                await new Promise(resolve => setTimeout(resolve, 5000));
+
+                // Verify connection before sticker
+                if (!client.pupPage || !client.info) {
+                    await handleReconnect();
+                    return;
+                }
+
                 try {
-                    await retryOperation(() => msg.reply('Maaf, terjadi kesalahan dalam memproses perintah. Silakan coba lagi.'));
-                } catch (replyError) {
-                    console.error('Failed to send error message:', replyError);
-                    // If we can't send the error message, try to reconnect
+                    await client.pupPage.evaluate(() => true);
+                } catch (error) {
+                    await handleReconnect();
+                    return;
+                }
+
+                const stickerPath = path.join(__dirname, 'public', 'assets', 'stickers', 'izin.jpeg');
+                await sendStickerFromFile(msg, stickerPath);
+                
+                // Wait after sticker
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            } catch (error) {
+                console.error('Error in !izin command:', error);
+                if (error.message.includes('Session closed') || error.message.includes('Target closed')) {
                     await handleReconnect();
                 }
             }
+            return;
         }
     } catch (error) {
         console.error('Critical error in message handler:', error);
@@ -909,7 +887,7 @@ async function initializeClient() {
 // Add reconnection handler
 async function handleReconnect() {
     const MAX_RECONNECT_ATTEMPTS = 5;
-    const RECONNECT_INTERVAL = 30000; // Reduced to 30 seconds
+    const RECONNECT_INTERVAL = 30000; // 30 seconds
 
     if (!botState.reconnectAttempts) {
         botState.reconnectAttempts = 0;
@@ -924,6 +902,7 @@ async function handleReconnect() {
     console.log(`Attempting to reconnect (attempt ${botState.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
 
     try {
+        // Clean up existing browser/page
         if (client.pupPage) {
             await client.pupPage.close().catch(() => {});
         }
@@ -932,18 +911,25 @@ async function handleReconnect() {
         }
         await client.destroy();
         console.log('Previous client instance destroyed');
-    } catch (error) {
-        console.error('Error destroying previous client instance:', error);
-    }
 
-    // Wait before attempting to reconnect
-    await new Promise(resolve => setTimeout(resolve, RECONNECT_INTERVAL));
+        // Wait before reconnecting
+        await new Promise(resolve => setTimeout(resolve, RECONNECT_INTERVAL));
 
-    try {
+        // Initialize new client
         await initializeClient();
-        if (botState.isAuthenticated) {
-            botState.reconnectAttempts = 0; // Reset counter on successful reconnection
-            console.log('Reconnection successful, session restored');
+        
+        // Verify new connection
+        if (client.pupPage && client.info) {
+            try {
+                await client.pupPage.evaluate(() => true);
+                botState.reconnectAttempts = 0;
+                botState.isReady = true;
+                console.log('Reconnection successful, session restored');
+            } catch (error) {
+                throw new Error('Failed to verify new connection');
+            }
+        } else {
+            throw new Error('Client not properly initialized');
         }
     } catch (error) {
         console.error('Reconnection attempt failed:', error);
