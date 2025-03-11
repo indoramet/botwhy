@@ -443,12 +443,32 @@ client.on('ready', async () => {
     botState.isReady = true;
     botState.isAuthenticated = true;
     botState.lastQR = null;
-    botState.reconnectAttempts = 0; // Reset reconnect attempts on ready
+    botState.reconnectAttempts = 0;
     io.emit('ready');
     
     try {
+        // Force a quick client refresh to ensure message handlers are attached
+        const page = client.pupPage;
+        if (page) {
+            await page.evaluate(() => {
+                window.Store.Msg.on('add', (msg) => {
+                    console.log('New message detected by Store:', msg);
+                });
+            });
+        }
+        
         // Start the connection check immediately
         startConnectionCheck();
+        
+        // Send a test message to verify message handling
+        console.log('Testing message handling...');
+        const testMsg = {
+            from: 'SYSTEM',
+            body: '!test',
+            reply: async (text) => console.log('Test reply:', text),
+            getChat: async () => ({ sendMessage: async (text) => console.log('Test chat message:', text) })
+        };
+        await client.emit('message', testMsg);
         
         // Try to load chats but don't wait for it
         client.getChats().then(chats => {
@@ -607,19 +627,55 @@ let activeSocket = null;
 
 const lastUserMessage = new Map();
 
+client.on('message_create', (msg) => {
+    console.log('=== RAW MESSAGE CREATE EVENT ===');
+    console.log({
+        fromMe: msg.fromMe,
+        from: msg.from,
+        to: msg.to,
+        body: msg.body,
+        type: msg.type,
+        timestamp: new Date().toISOString()
+    });
+});
+
 client.on('message', async msg => {
+    // Immediate logging of raw message
+    console.log('=== MESSAGE EVENT TRIGGERED ===');
+    console.log('Message details:', {
+        from: msg.from,
+        body: msg.body,
+        hasQuoted: !!msg.hasQuotedMsg,
+        timestamp: new Date().toISOString()
+    });
+
     try {
-        // Immediate debug logging
-        console.log('=== NEW MESSAGE RECEIVED ===');
-        console.log('Raw message:', {
-            from: msg.from,
-            to: msg.to,
-            body: msg.body,
-            hasMedia: msg.hasMedia,
-            timestamp: new Date().toISOString(),
-            type: msg._data.type,
-            isGroup: msg._data.isGroup
-        });
+        // Verify client state
+        if (!botState.isReady) {
+            console.log('Bot not ready, message ignored');
+            return;
+        }
+
+        // Basic command check
+        const command = msg.body.toLowerCase();
+        console.log('Processing command:', command);
+
+        // Simple test response for any message starting with !
+        if (command.startsWith('!')) {
+            try {
+                console.log('Attempting to reply to command:', command);
+                await msg.reply('Received your command: ' + command);
+                console.log('Reply sent successfully');
+            } catch (replyError) {
+                console.error('Error sending reply:', replyError);
+                // Try alternative send method
+                const chat = await msg.getChat();
+                await chat.sendMessage('Received your command: ' + command);
+                console.log('Reply sent via alternative method');
+            }
+        }
+
+        // Continue with the rest of your message handling...
 
         // Check client state
         if (!client.pupPage || !client.info) {
@@ -677,10 +733,6 @@ client.on('message', async msg => {
                 time: moment().format('HH:mm:ss')
             });
         }
-
-        // Process the message
-        const command = msg.body.toLowerCase();
-        console.log('Processing command:', command);
 
         // Check for admin commands first
         if (ADMIN_NUMBERS.includes(msg.from)) {
@@ -802,17 +854,6 @@ client.on('message_ack', (msg, ack) => {
         to: msg.to,
         body: msg.body,
         ack: ack
-    });
-});
-
-client.on('message_create', async (msg) => {
-    console.log('Message create event:', {
-        fromMe: msg.fromMe,
-        from: msg.from,
-        to: msg.to,
-        body: msg.body,
-        hasMedia: msg.hasMedia,
-        timestamp: new Date().toISOString()
     });
 });
 
