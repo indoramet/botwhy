@@ -1146,19 +1146,35 @@ async function initializeClient() {
         
         // Clean up and prepare sessions directory
         const sessionsPath = '/app/sessions';
+        const profilePath = path.join(sessionsPath, 'session-bot-whatsapp');
+        const singletonLockPath = path.join(profilePath, 'SingletonLock');
+        
         try {
-            // Remove existing session data
+            // Remove existing session data and SingletonLock
             await fs.rm(sessionsPath, { recursive: true, force: true }).catch(() => {});
             console.log('Cleaned up existing session data');
             
             // Create fresh sessions directory with proper permissions
             await fs.mkdir(sessionsPath, { recursive: true });
             await fs.chmod(sessionsPath, 0o777).catch(() => {});
+            
+            // Create profile directory
+            await fs.mkdir(profilePath, { recursive: true });
+            await fs.chmod(profilePath, 0o777).catch(() => {});
+            
+            // Ensure SingletonLock is removed
+            try {
+                await fs.unlink(singletonLockPath).catch(() => {});
+            } catch (error) {
+                console.log('No SingletonLock to remove');
+            }
+            
+            // Create store directory
             await fs.mkdir(path.join(sessionsPath, '.store'), { recursive: true });
             
             // Small delay to ensure file system operations complete
             await new Promise(resolve => setTimeout(resolve, 2000));
-            console.log('Created fresh sessions directory');
+            console.log('Created fresh sessions directory structure');
         } catch (error) {
             console.error('Error managing sessions directory:', error);
         }
@@ -1173,6 +1189,12 @@ async function initializeClient() {
                 
                 // Additional delay between attempts
                 if (initAttempts > 0) {
+                    // Remove SingletonLock before retry
+                    try {
+                        await fs.unlink(singletonLockPath).catch(() => {});
+                    } catch (error) {
+                        console.log('No SingletonLock to remove before retry');
+                    }
                     await new Promise(resolve => setTimeout(resolve, 5000));
                 }
                 
@@ -1203,6 +1225,13 @@ async function initializeClient() {
                 
                 // Clean up after failed attempt
                 await client.destroy().catch(() => {});
+                
+                // Remove SingletonLock after failure
+                try {
+                    await fs.unlink(singletonLockPath).catch(() => {});
+                } catch (error) {
+                    console.log('No SingletonLock to remove after failure');
+                }
                 
                 if (initAttempts === maxInitAttempts) {
                     // On final failure, ensure sessions are cleaned up
