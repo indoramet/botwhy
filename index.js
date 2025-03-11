@@ -434,38 +434,8 @@ client.on('authenticated', async () => {
     botState.lastQR = null;
     io.emit('authenticated');
     
-    // Force a quick reconnection after authentication with timeout
-    try {
-        console.log('Forcing reconnection to ensure message listener is attached...');
-        const reconnectTimeout = setTimeout(() => {
-            console.log('Reconnection timed out, proceeding with initialization...');
-            client.initialize().catch(console.error);
-        }, 30000); // 30 second timeout
-
-        await client.destroy();
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        
-        // Clear timeout if we get here
-        clearTimeout(reconnectTimeout);
-        
-        console.log('Starting reinitialize after destroy...');
-        await client.initialize();
-        console.log('Reconnection successful');
-    } catch (error) {
-        console.error('Error during forced reconnection:', error);
-        // If reconnection fails, try one more time with clean session
-        try {
-            console.log('Attempting clean session reconnect...');
-            await client.destroy();
-            const sessionsPath = './sessions';
-            await fs.rm(sessionsPath, { recursive: true, force: true });
-            await fs.mkdir(sessionsPath, { recursive: true });
-            await client.initialize();
-        } catch (finalError) {
-            console.error('Final reconnection attempt failed:', finalError);
-            process.exit(1); // Force process restart
-        }
-    }
+    // Instead of forcing reconnection, wait for ready event
+    console.log('Waiting for client to be ready...');
 });
 
 client.on('ready', async () => {
@@ -474,45 +444,107 @@ client.on('ready', async () => {
     botState.isAuthenticated = true;
     botState.lastQR = null;
     botState.reconnectAttempts = 0; // Reset reconnect attempts on ready
+    io.emit('ready');
     
     try {
-        // Add timeout for chat loading
-        const chatLoadTimeout = setTimeout(() => {
-            console.log('Chat loading timed out, emitting ready anyway');
-            io.emit('ready');
-        }, 30000); // 30 second timeout
+        // Verify connection is stable
+        const chats = await client.getChats();
+        console.log(`Loaded ${chats.length} chats successfully`);
         
-        // Add longer delay before loading chats
-        await new Promise(resolve => setTimeout(resolve, 10000));
-        
-        // Wrap chat loading in retry logic
-        let retries = 0;
-        const maxRetries = 5;
-        
-        while (retries < maxRetries) {
+        // Start the ping/pong interval only after successful ready state
+        startConnectionCheck();
+    } catch (error) {
+        console.error('Error loading initial chats:', error);
+        // Continue anyway as the connection might still be usable
+    }
+});
+
+// Separate the connection check into its own function
+function startConnectionCheck() {
+    // Clear any existing interval
+    if (global.pingInterval) {
+        clearInterval(global.pingInterval);
+    }
+    
+    global.pingInterval = setInterval(async () => {
+        if (botState.isAuthenticated && client.pupPage) {
             try {
-                await new Promise(resolve => setTimeout(resolve, 5000 * (retries + 1))); // Exponential backoff
-                const chats = await client.getChats();
-                console.log(`Loaded ${chats.length} chats successfully`);
-                clearTimeout(chatLoadTimeout); // Clear timeout on success
-                io.emit('ready');
-                break;
+                await client.pupPage.evaluate(() => navigator.onLine);
+                botState.lastPing = Date.now();
+                console.log('Connection check: OK');
             } catch (error) {
-                retries++;
-                console.error(`Error loading chats (attempt ${retries}/${maxRetries}):`, error);
-                
-                if (retries === maxRetries) {
-                    console.log('Failed to load chats after all retries, proceeding anyway...');
-                    clearTimeout(chatLoadTimeout);
-                    io.emit('ready');
+                console.log('Connection check failed, attempting to reconnect...');
+                if (Date.now() - botState.lastPing > 30000) { // 30 seconds without successful ping
+                    await handleReconnect();
                 }
             }
         }
-    } catch (error) {
-        console.error('Error in ready event:', error);
-        io.emit('ready'); // Continue anyway
+    }, 20000); // Check every 20 seconds
+}
+
+// Update handleReconnect to be more cautious
+async function handleReconnect() {
+    const MAX_RECONNECT_ATTEMPTS = 5;
+    const RECONNECT_INTERVAL = 30000; // 30 seconds
+
+    if (botState.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        console.log('Max reconnection attempts reached, restarting process...');
+        process.exit(1); // Railway will automatically restart the process
     }
-});
+
+    botState.reconnectAttempts++;
+    console.log(`Attempting to reconnect (attempt ${botState.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+
+    try {
+        // First try to gracefully destroy the client
+        try {
+            await client.destroy();
+            console.log('Previous client instance destroyed');
+        } catch (destroyError) {
+            console.error('Error destroying previous client instance:', destroyError);
+        }
+
+        // Wait before attempting to reconnect
+        await new Promise(resolve => setTimeout(resolve, RECONNECT_INTERVAL));
+
+        // Clear any existing session data if we're having persistent issues
+        if (botState.reconnectAttempts > 2) {
+            try {
+                const sessionsPath = './sessions';
+                await fs.rm(sessionsPath, { recursive: true, force: true });
+                await fs.mkdir(sessionsPath, { recursive: true });
+                console.log('Cleared session data');
+            } catch (error) {
+                console.error('Error clearing sessions:', error);
+            }
+        }
+
+        // Attempt to initialize the client
+        await client.initialize();
+        
+        // Wait for ready state
+        await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                reject(new Error('Ready state timeout'));
+            }, 60000); // 60 second timeout
+
+            client.once('ready', () => {
+                clearTimeout(timeout);
+                resolve();
+            });
+        });
+        
+        // If we get here, the connection was successful
+        console.log('Reconnection successful');
+        botState.reconnectAttempts = 0;
+        botState.lastPing = Date.now();
+    } catch (error) {
+        console.error('Reconnection attempt failed:', error);
+        // Wait a bit before trying again
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        await handleReconnect();
+    }
+}
 
 client.on('disconnected', async (reason) => {
     console.log('Client disconnected:', reason);
@@ -786,58 +818,6 @@ async function initializeClient() {
     }
 }
 
-// Add reconnection handler
-async function handleReconnect() {
-    const MAX_RECONNECT_ATTEMPTS = 5;
-    const RECONNECT_INTERVAL = 30000; // 30 seconds
-
-    if (botState.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-        console.log('Max reconnection attempts reached, restarting process...');
-        process.exit(1); // Railway will automatically restart the process
-    }
-
-    botState.reconnectAttempts++;
-    console.log(`Attempting to reconnect (attempt ${botState.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
-
-    try {
-        // First try to gracefully destroy the client
-        try {
-            await client.destroy();
-            console.log('Previous client instance destroyed');
-        } catch (destroyError) {
-            console.error('Error destroying previous client instance:', destroyError);
-        }
-
-        // Wait before attempting to reconnect
-        await new Promise(resolve => setTimeout(resolve, RECONNECT_INTERVAL));
-
-        // Clear any existing session data if we're having persistent issues
-        if (botState.reconnectAttempts > 2) {
-            try {
-                const sessionsPath = './sessions';
-                await fs.rm(sessionsPath, { recursive: true, force: true });
-                await fs.mkdir(sessionsPath, { recursive: true });
-                console.log('Cleared session data');
-            } catch (error) {
-                console.error('Error clearing sessions:', error);
-            }
-        }
-
-        // Attempt to initialize the client
-        await client.initialize();
-        
-        // If we get here, the connection was successful
-        console.log('Reconnection successful');
-        botState.reconnectAttempts = 0;
-        botState.lastPing = Date.now();
-    } catch (error) {
-        console.error('Reconnection attempt failed:', error);
-        // Wait a bit before trying again
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        await handleReconnect();
-    }
-}
-
 // Update the startBot function
 async function startBot() {
     try {
@@ -863,22 +843,6 @@ server.listen(PORT, HOST, () => {
     console.log(`Server running on http://${HOST}:${PORT}`);
     startBot();
 });
-
-// Add ping/pong to keep connection alive
-setInterval(async () => {
-    if (botState.isAuthenticated && client.pupPage) {
-        try {
-            await client.pupPage.evaluate(() => navigator.onLine);
-            botState.lastPing = Date.now();
-            console.log('Connection check: OK');
-        } catch (error) {
-            console.log('Connection check failed, attempting to reconnect...');
-            if (Date.now() - botState.lastPing > 30000) { // 30 seconds without successful ping
-                await handleReconnect();
-            }
-        }
-    }
-}, 20000); // Check every 20 seconds
 
 // Add message received debug event
 client.on('message_create', async (msg) => {
