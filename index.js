@@ -629,71 +629,48 @@ let activeSocket = null;
 
 const lastUserMessage = new Map();
 
-client.on('message', async msg => {
+// Add this right after client initialization
+client.on('message_create', (msg) => {
+    console.log('Message create event:', {
+        from: msg.from,
+        body: msg.body
+    });
+});
+
+client.on('message', async (msg) => {
+    // Immediate logging of received message
+    console.log('Message received:', {
+        from: msg.from,
+        body: msg.body,
+        timestamp: new Date().toISOString()
+    });
+
     try {
-        // Basic message logging
-        console.log('Raw message received:', {
-            from: msg.from,
-            body: msg.body,
-            hasData: !!msg._data
-        });
-
-        // Wait for client to be ready with timeout
-        let retries = 0;
-        while (!client.info && retries < 3) {
-            console.log('Waiting for client info...');
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            retries++;
-        }
-
-        if (!client.info) {
-            console.log('Client info still not available after waiting');
-            return;
-        }
-
-        // Get chat with retry
-        let chat;
-        try {
-            chat = await msg.getChat();
-        } catch (error) {
-            console.error('Error getting chat:', error);
-            return;
-        }
-
-        // Rate limiting check
-        const now = Date.now();
-        const lastTime = lastUserMessage.get(msg.from) || 0;
-        
-        if (now - lastTime < 2000) {
-            console.log('Rate limiting response to:', msg.from);
-            return;
-        }
-
-        lastUserMessage.set(msg.from, now);
-
-        // Notify web interface
-        if (activeSocket) {
-            activeSocket.emit('message', {
-                from: msg.from,
-                body: msg.body,
-                time: moment().format('HH:mm:ss')
-            });
-        }
-
+        // Simple command processing
         const command = msg.body.toLowerCase().trim();
+        
+        // Log the command being processed
         console.log('Processing command:', command);
 
-        // Check for admin commands first
-        if (await handleAdminCommand(msg)) {
-            console.log('Admin command handled');
-            return;
-        }
-
-        // Process any message that starts with ! regardless of chat type
+        // Check if it's a command
         if (command.startsWith('!')) {
+            console.log('Valid command detected:', command);
+
+            // Handle admin commands first
+            if (ADMIN_NUMBERS.includes(msg.from)) {
+                const isAdminCommand = await handleAdminCommand(msg);
+                if (isAdminCommand) {
+                    console.log('Admin command handled');
+                    return;
+                }
+            }
+
+            // Process regular commands
             try {
-                if (command === '!help' || command === '!bantuan') {
-                    await msg.reply(`Daftar perintah yang tersedia:
+                switch (command) {
+                    case '!help':
+                    case '!bantuan':
+                        await msg.reply(`Daftar perintah yang tersedia:
 !jadwal - Informasi jadwal praktikum
 !laporan - Cara upload laporan
 !sesi - Informasi sesi praktikum
@@ -703,59 +680,68 @@ client.on('message', async msg => {
 !software - Link download software praktikum
 !template - Link template laporan
 !tugasakhir - Informasi tugas akhir`);
+                        break;
+
+                    case '!izin':
+                        await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
+                        try {
+                            const stickerPath = path.join(__dirname, 'public', 'assets', 'stickers', 'izin.jpeg');
+                            await sendStickerFromFile(msg, stickerPath);
+                        } catch (stickerError) {
+                            console.error('Sticker error:', stickerError);
+                            await msg.reply('Maaf, terjadi kesalahan saat mengirim sticker. Pesan izin tetap tercatat.');
+                        }
+                        break;
+
+                    case '!software':
+                        await msg.reply('https://s.id/softwarepraktikum');
+                        break;
+
+                    case '!template':
+                        await msg.reply('https://s.id/templatebdX');
+                        break;
+
+                    case '!asistensi':
+                        await msg.reply('Untuk melihat jadwal asistensi gunakan command !asistensi1 sampai !asistensi7 sesuai dengan pertemuan yang ingin dilihat');
+                        break;
+
+                    case '!tugasakhir':
+                        await msg.reply(dynamicCommands.tugasakhir);
+                        break;
+
+                    case '!jadwal':
+                        await msg.reply(dynamicCommands.jadwal);
+                        break;
+
+                    case '!nilai':
+                        await msg.reply(dynamicCommands.nilai);
+                        break;
+
+                    case '!sesi':
+                        await msg.reply('Praktikum sesi satu : 15:15 - 16:05\nPraktikum sesi dua : 16:10 - 17:00\nPraktikum sesi tiga : 20:00 - 20:50');
+                        break;
+
+                    case '!laporan':
+                        await msg.reply('Untuk mengupload laporan:\n1. ubah file word laporan menjadi pdf\n2. cek link upload laporan sesuai dengan pertemuan ke berapa command contoh !laporan1\n3. klik link upload laporan\n4. upload laporan\n5. Tunggu sampai kelar\nJANGAN SAMPAI MENGUMPULKAN LAPORAN TERLAMBAT -5%!!!');
+                        break;
+
+                    default:
+                        // Handle asistensi1-7 and laporan1-7 commands
+                        if (/^!asistensi[1-7]$/.test(command)) {
+                            await msg.reply(dynamicCommands[command.substring(1)]);
+                        } else if (/^!laporan[1-7]$/.test(command)) {
+                            await msg.reply(dynamicCommands[command.substring(1)]);
+                        }
+                        break;
                 }
-                else if (command === '!izin') {
-                    await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
-                    try {
-                        const stickerPath = path.join(__dirname, 'public', 'assets', 'stickers', 'izin.jpeg');
-                        await sendStickerFromFile(msg, stickerPath);
-                    } catch (stickerError) {
-                        console.error('Sticker error:', stickerError);
-                        await msg.reply('Maaf, terjadi kesalahan saat mengirim sticker. Pesan izin tetap tercatat.');
-                    }
-                }
-                else if (command === '!software') {
-                    await msg.reply('https://s.id/softwarepraktikum');
-                }
-                else if (command === '!template') {
-                    await msg.reply('https://s.id/templatebdX');
-                }
-                else if (command === '!asistensi') {
-                    await msg.reply('Untuk melihat jadwal asistensi gunakan command !asistensi1 sampai !asistensi7 sesuai dengan pertemuan yang ingin dilihat');
-                }
-                else if (command === '!tugasakhir') {
-                    await msg.reply(dynamicCommands.tugasakhir);
-                }
-                else if (command.startsWith('!asistensi') && /^!asistensi[1-7]$/.test(command)) {
-                    await msg.reply(dynamicCommands[command.substring(1)]);
-                }
-                else if (command === '!jadwal' || command === 'kapan praktikum?') {
-                    await msg.reply(dynamicCommands.jadwal);
-                }
-                else if (command === '!nilai' || command === 'nilai praktikum?') {
-                    await msg.reply(dynamicCommands.nilai);
-                }
-                else if (command === '!sesi' || command === 'sesi praktikum?') {
-                    await msg.reply('Praktikum sesi satu : 15:15 - 16:05\nPraktikum sesi dua : 16:10 - 17:00\nPraktikum sesi tiga : 20:00 - 20:50');
-                }
-                else if (command === '!laporan' || command === 'bagaimana cara upload laporan?') {
-                    await msg.reply('Untuk mengupload laporan:\n1. ubah file word laporan menjadi pdf\n2. cek link upload laporan sesuai dengan pertemuan ke berapa command contoh !laporan1\n3. klik link upload laporan\n4. upload laporan\n5. Tunggu sampai kelar\nJANGAN SAMPAI MENGUMPULKAN LAPORAN TERLAMBAT -5%!!!');
-                }
-                else if (command.startsWith('!laporan') && /^!laporan[1-7]$/.test(command)) {
-                    await msg.reply(dynamicCommands[command.substring(1)]);
-                }
+                console.log('Command processed successfully:', command);
             } catch (cmdError) {
-                console.error('Command execution error:', cmdError);
+                console.error('Error processing command:', cmdError);
                 await msg.reply('Maaf, terjadi kesalahan dalam memproses perintah. Silakan coba lagi.');
             }
         }
     } catch (error) {
-        console.error('Critical error in message handler:', error);
-        try {
-            await msg.reply('Terjadi kesalahan sistem. Mohon coba lagi dalam beberapa saat.');
-        } catch (replyError) {
-            console.error('Could not send error message:', replyError);
-        }
+        console.error('Error in message handler:', error);
     }
 });
 
