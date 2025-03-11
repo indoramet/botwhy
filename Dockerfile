@@ -41,7 +41,13 @@ RUN apt-get update && apt-get install -y \
     wget \
     xdg-utils \
     xvfb \
+    dbus \
+    dbus-x11 \
     && rm -rf /var/lib/apt/lists/*
+
+# Set up dbus configuration
+RUN mkdir -p /var/run/dbus && \
+    dbus-uuidgen > /var/lib/dbus/machine-id
 
 # Set working directory
 WORKDIR /app
@@ -59,13 +65,44 @@ RUN npm install
 COPY . .
 
 # Set Puppeteer environment variables
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-ENV NODE_TLS_REJECT_UNAUTHORIZED=0
-ENV DISPLAY=:99
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
+    NODE_TLS_REJECT_UNAUTHORIZED=0 \
+    DISPLAY=:99 \
+    DBUS_SESSION_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket \
+    PORT=3000 \
+    RAILWAY_VOLUME_MOUNT=/data \
+    RAILWAY_STATIC_URL=$RAILWAY_STATIC_URL
 
-# Create a wrapper script to start Xvfb and the application
-RUN echo '#!/bin/bash\nXvfb :99 -screen 0 1024x768x16 &\nnpm start' > /app/start.sh && \
+# Create data directory for Railway persistent storage
+RUN mkdir -p /data && chmod 777 /data
+
+# Create a wrapper script to start dbus, Xvfb and the application
+RUN echo '#!/bin/bash\n\
+# Setup DBus\n\
+mkdir -p /var/run/dbus\n\
+rm -f /var/run/dbus/pid\n\
+dbus-daemon --system --fork\n\
+\n\
+# Setup display\n\
+Xvfb :99 -screen 0 1280x900x16 -ac &\n\
+sleep 2\n\
+\n\
+# Setup persistent storage\n\
+if [ -d "/data/sessions" ]; then\n\
+    echo "Using existing sessions from persistent storage"\n\
+    rm -rf /app/sessions\n\
+    ln -s /data/sessions /app/sessions\n\
+else\n\
+    echo "Creating new sessions directory in persistent storage"\n\
+    mkdir -p /data/sessions\n\
+    cp -r /app/sessions/* /data/sessions/ 2>/dev/null || true\n\
+    rm -rf /app/sessions\n\
+    ln -s /data/sessions /app/sessions\n\
+fi\n\
+\n\
+# Start the application\n\
+exec node index.js' > /app/start.sh && \
     chmod +x /app/start.sh
 
 # Expose port

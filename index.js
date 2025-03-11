@@ -411,7 +411,7 @@ setInterval(processMessageQueue, DELAY_BETWEEN_MESSAGES);
 const client = new Client({
     authStrategy: new LocalAuth({
         clientId: 'bot-whatsapp',
-        dataPath: '/app/sessions',
+        dataPath: process.env.RAILWAY_VOLUME_MOUNT ? '/data/sessions' : '/app/sessions',
         backupSyncIntervalMs: 300000
     }),
     puppeteer: {
@@ -420,59 +420,32 @@ const client = new Client({
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--disable-software-rasterizer',
+            '--disable-web-security',
+            '--disable-features=IsolateOrigins,site-per-process',
+            '--disable-site-isolation-trials',
+            '--no-experiments',
+            '--ignore-certificate-errors',
+            '--ignore-certificate-errors-spki-list',
+            '--disable-extensions',
+            '--disable-setuid-sandbox',
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
-            '--disable-gpu',
-            '--disable-extensions',
-            '--disable-web-security',
-            '--disable-features=site-per-process',
+            '--no-zygote',
+            '--deterministic-fetch',
+            '--disable-features=AudioServiceOutOfProcess',
+            '--disable-features=LazyFrameLoading',
             '--window-size=1280,900',
             '--single-process',
-            '--no-zygote',
-            '--disable-features=AudioServiceOutOfProcess',
-            '--disable-software-rasterizer',
-            '--disable-background-timer-throttling',
-            '--disable-backgrounding-occluded-windows',
-            '--disable-renderer-backgrounding',
-            '--disable-ipc-flooding-protection',
-            '--enable-features=NetworkService,NetworkServiceInProcess',
-            '--ignore-certificate-errors',
-            '--disable-infobars',
+            '--no-sandbox',
             '--disable-notifications',
-            '--force-color-profile=srgb',
+            '--disable-desktop-notifications',
+            '--no-default-browser-check',
+            '--autoplay-policy=no-user-gesture-required',
             '--disable-features=TranslateUI',
             '--disable-features=GlobalMediaControls',
-            '--disable-client-side-phishing-detection',
-            '--disable-component-extensions-with-background-pages',
-            '--disable-default-apps',
-            '--disable-domain-reliability',
-            '--disable-features=Translate',
-            '--disable-hang-monitor',
-            '--disable-popup-blocking',
-            '--disable-prompt-on-repost',
-            '--disable-sync',
-            '--disable-web-security',
-            '--disable-zero-browsers-open-for-tests',
-            '--ignore-certificate-errors',
-            '--ignore-ssl-errors',
-            '--no-default-browser-check',
-            '--no-experiments',
-            '--no-pings',
-            '--no-proxy-server',
-            '--no-service-autorun',
-            '--password-store=basic',
-            '--enable-automation',
-            '--disable-blink-features=AutomationControlled',
-            '--disable-crash-reporter',
-            '--disable-breakpad',
-            '--disable-component-update',
-            '--disable-logging',
-            '--disable-dev-tools',
-            '--disable-browser-side-navigation',
-            '--disable-features=PaintHolding',
-            '--disable-features=BlinkGenPropertyTrees',
-            '--disable-features=LazyFrameLoading',
-            '--disable-features=AutoplayIgnoreWebAudio',
+            '--disable-features=DestroyProfileOnBrowserClose',
             '--disable-features=MediaRouter',
             '--disable-features=OptimizationHints',
             '--disable-features=ProcessPerSiteUpToMainFrameThreshold',
@@ -481,31 +454,7 @@ const client = new Client({
             '--disable-features=WebOTP',
             '--disable-features=WebPayments',
             '--disable-features=WebUSB',
-            '--disable-features=WebXR',
-            '--aggressive-cache-discard',
-            '--disable-cache',
-            '--disable-application-cache',
-            '--disable-offline-load-stale-cache',
-            '--disk-cache-size=0',
-            '--media-cache-size=0',
-            '--disable-gpu-shader-disk-cache',
-            '--disable-gpu-program-cache',
-            '--disable-gpu-driver-bug-workarounds',
-            '--memory-pressure-off',
-            '--disable-pinch',
-            '--disable-speech-api',
-            '--disable-voice-input',
-            '--disable-wake-on-wifi',
-            '--disable-web-security',
-            '--disable-webaudio',
-            '--disable-webgl',
-            '--disable-webgl2',
-            '--disable-webrtc',
-            '--disable-websecurity',
-            '--disable-xss-auditor',
-            '--no-startup-window',
-            '--enable-precise-memory-info',
-            '--js-flags="--max-old-space-size=2048"'
+            '--disable-features=WebXR'
         ],
         defaultViewport: {
             width: 1280,
@@ -515,8 +464,7 @@ const client = new Client({
             isLandscape: true,
             isMobile: false
         },
-        executablePath: '/usr/bin/chromium',
-        browserWSEndpoint: null,
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
         ignoreHTTPSErrors: true,
         timeout: 180000,
         protocolTimeout: 180000,
@@ -959,7 +907,7 @@ async function initializeClient() {
         botState.lastQR = null;
         
         // Ensure sessions directory exists
-        const sessionsPath = '/app/sessions';
+        const sessionsPath = process.env.RAILWAY_VOLUME_MOUNT ? '/data/sessions' : '/app/sessions';
         try {
             await fs.access(sessionsPath);
             console.log('Sessions directory exists');
@@ -1098,7 +1046,7 @@ async function handleReconnect() {
 async function startBot() {
     try {
         // Check if sessions directory exists and has content
-        const sessionsPath = '/app/sessions';
+        const sessionsPath = process.env.RAILWAY_VOLUME_MOUNT ? '/data/sessions' : '/app/sessions';
         try {
             await fs.access(path.join(sessionsPath, 'bot-whatsapp'));
             botState.sessionExists = true;
