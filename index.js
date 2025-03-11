@@ -965,21 +965,40 @@ app.get('/login', (req, res) => {
 
 // Add admin endpoints for session management
 app.get('/admin/clear-session', async (req, res) => {
-    const adminKey = req.query.key;
-    if (adminKey !== process.env.ADMIN_KEY) {
-        return res.status(403).json({ error: 'Unauthorized' });
-    }
-
     try {
-        console.log('Clearing session and restarting bot...');
+        const adminKey = req.query.key;
+        console.log('Received clear session request with key:', adminKey);
         
+        if (!process.env.ADMIN_KEY) {
+            console.error('ADMIN_KEY environment variable not set');
+            return res.status(500).json({ error: 'Server configuration error' });
+        }
+
+        if (adminKey !== process.env.ADMIN_KEY) {
+            console.log('Invalid admin key provided');
+            return res.status(403).json({ error: 'Unauthorized' });
+        }
+
+        console.log('Admin key validated, proceeding with session clear...');
+
         // Destroy the client first
         if (client) {
-            await client.destroy();
+            try {
+                await client.destroy();
+                console.log('WhatsApp client destroyed successfully');
+            } catch (error) {
+                console.error('Error destroying client:', error);
+            }
         }
         
         // Clear the sessions directory
-        await fs.rm('./sessions', { recursive: true, force: true });
+        try {
+            await fs.rm('./sessions', { recursive: true, force: true });
+            console.log('Sessions directory cleared successfully');
+        } catch (error) {
+            console.error('Error clearing sessions directory:', error);
+            // Continue even if this fails
+        }
         
         // Reset bot state
         botState = {
@@ -991,17 +1010,33 @@ app.get('/admin/clear-session', async (req, res) => {
             lastPing: Date.now()
         };
         
-        // Restart the bot
-        setTimeout(() => {
-            process.exit(1); // Railway will automatically restart the process
-        }, 1000);
+        console.log('Bot state reset, preparing to restart...');
         
-        res.json({ success: true, message: 'Session cleared, bot is restarting' });
+        // Send response before restarting
+        res.json({ 
+            success: true, 
+            message: 'Session cleared, bot is restarting',
+            timestamp: new Date().toISOString()
+        });
+        
+        // Restart the bot after a short delay
+        setTimeout(() => {
+            console.log('Initiating process restart...');
+            process.exit(1); // Railway will automatically restart the process
+        }, 2000);
+        
     } catch (error) {
-        console.error('Error clearing session:', error);
-        res.status(500).json({ error: 'Failed to clear session' });
+        console.error('Error in clear-session endpoint:', error);
+        res.status(500).json({ 
+            error: 'Failed to clear session',
+            message: error.message
+        });
     }
 });
+
+// Move this before the admin endpoint
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 const PORT = process.env.PORT || 8080;
 const HOST = '0.0.0.0';
