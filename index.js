@@ -320,15 +320,33 @@ async function sendStickerFromFile(msg, imagePath) {
             throw new Error('Sticker file not found');
         }
 
+        // Add delay before processing
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
         const imageData = await fs.readFile(imagePath);
         const base64Image = imageData.toString('base64');
-        const stickerData = await processMediaForSticker(base64Image, false);
+        
+        // Process media with retry
+        const stickerData = await retryOperation(async () => {
+            return await processMediaForSticker(base64Image, false);
+        });
+        
         const stickerMedia = new MessageMedia('image/webp', stickerData);
         
-        // Add retry logic for sending sticker
+        // Check client state before sending
+        if (!client.pupPage || !client.info) {
+            console.log('Client not ready, attempting to reconnect...');
+            await handleReconnect();
+            throw new Error('Client reconnecting, please try again');
+        }
+        
+        // Add delay before sending
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Send sticker with retry
         return await retryOperation(async () => {
             return await msg.reply(stickerMedia, null, { sendMediaAsSticker: true });
-        });
+        }, 5, 2000); // Increase retries to 5 with 2 second delay
     } catch (error) {
         console.error('Error sending sticker:', error);
         throw error;
@@ -394,10 +412,7 @@ const client = new Client({
     authStrategy: new LocalAuth({
         clientId: 'bot-whatsapp',
         dataPath: '/app/sessions',
-        backupSyncIntervalMs: 300000,
-        dataStore: {
-            storePath: '/app/sessions/.store'
-        }
+        backupSyncIntervalMs: 300000
     }),
     puppeteer: {
         headless: true,
@@ -410,63 +425,24 @@ const client = new Client({
             '--disable-gpu',
             '--disable-extensions',
             '--disable-web-security',
-            '--disable-features=site-per-process,IsolateOrigins',
+            '--disable-features=site-per-process',
             '--window-size=800,600',
             '--single-process',
             '--no-zygote',
             '--disable-features=AudioServiceOutOfProcess',
-            '--disable-features=IsolateOrigins,site-per-process',
             '--disable-software-rasterizer',
-            '--ignore-certificate-errors',
-            '--ignore-certificate-errors-spki-list',
-            '--disable-infobars',
-            '--disable-notifications',
-            '--use-gl=disabled',
-            '--disable-setuid-sandbox',
-            '--no-zygote',
-            '--deterministic-fetch',
-            '--disable-features=IsolateOrigins',
-            '--disable-features=site-per-process',
-            '--disable-blink-features=AutomationControlled',
-            '--disable-sync',
-            '--disable-background-networking',
-            '--disable-default-apps',
-            '--disable-translate',
-            '--disable-component-extensions-with-background-pages',
             '--disable-background-timer-throttling',
-            '--disable-renderer-backgrounding',
             '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding',
             '--disable-ipc-flooding-protection',
             '--enable-features=NetworkService,NetworkServiceInProcess',
-            '--force-color-profile=srgb',
-            '--disable-features=Translate',
-            '--disable-features=GlobalMediaControls',
-            '--disable-crash-reporter',
-            '--disable-breakpad',
-            '--disable-canvas-aa',
-            '--disable-2d-canvas-clip-aa',
-            '--disable-gl-drawing-for-tests',
-            '--enable-automation',
-            '--disable-background-timer-throttling',
-            '--disable-backgrounding-occluded-windows',
-            '--disable-client-side-phishing-detection',
-            '--disable-default-apps',
             '--disable-dev-shm-usage',
-            '--disable-extensions',
-            '--disable-features=Translate',
-            '--disable-hang-monitor',
-            '--disable-ipc-flooding-protection',
-            '--disable-popup-blocking',
-            '--disable-prompt-on-repost',
-            '--disable-sync',
-            '--disable-web-security',
-            '--ignore-certificate-errors',
-            '--no-default-browser-check',
-            '--no-experiments',
+            '--disable-setuid-sandbox',
             '--no-sandbox',
-            '--no-zygote',
-            '--use-gl=swiftshader',
-            '--window-position=0,0'
+            '--ignore-certificate-errors',
+            '--disable-infobars',
+            '--disable-notifications',
+            '--force-color-profile=srgb'
         ],
         defaultViewport: {
             width: 800,
@@ -484,7 +460,8 @@ const client = new Client({
         waitForInitialPage: true,
         handleSIGINT: false,
         handleSIGTERM: false,
-        handleSIGHUP: false
+        handleSIGHUP: false,
+        userDataDir: '/app/sessions/bot-whatsapp'
     },
     webVersion: '2.2408.52',
     webVersionCache: {
@@ -496,9 +473,7 @@ const client = new Client({
     qrTimeoutMs: 0,
     takeoverOnConflict: true,
     takeoverTimeoutMs: 0,
-    bypassCSP: true,
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    linkPreviewApiServers: ['https://preview.whatsapp.com/api/v1/preview']
+    bypassCSP: true
 });
 
 // Track bot state
@@ -669,9 +644,9 @@ const lastUserMessage = new Map();
 
 client.on('message', async msg => {
     try {
-        // Wait for client to be ready and check connection
+        // Check client state
         if (!client.info || !client.pupPage) {
-            console.log('Client not ready or disconnected, attempting to reconnect...');
+            console.log('Client not ready, attempting to reconnect...');
             await handleReconnect();
             return;
         }
@@ -679,7 +654,6 @@ client.on('message', async msg => {
         // Get chat before anything else
         const chat = await msg.getChat();
         
-        // Check if chat is muted
         if (chat.isMuted) {
             console.log('Chat is muted, skipping response:', msg.from);
             return;
@@ -718,38 +692,35 @@ client.on('message', async msg => {
             console.log('Processing command in chat:', command);
             
             try {
-                // For !izin command, send text first then sticker
+                // Process !izin command with enhanced error handling
                 if (command === '!izin') {
                     console.log('Processing !izin command');
-                    await retryOperation(async () => {
-                        await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
-                    });
-                    console.log('Sent initial !izin response');
-                    
-                    // Add a small delay before sending sticker
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                    
-                    const stickerPath = path.join(__dirname, 'public', 'assets', 'stickers', 'izin.jpeg');
-                    console.log('Sticker path:', stickerPath);
-                    
                     try {
-                        await fs.access(path.dirname(stickerPath));
-                    } catch (error) {
-                        console.log('Creating sticker directory');
-                        await fs.mkdir(path.dirname(stickerPath), { recursive: true });
-                    }
-                    
-                    try {
-                        await sendStickerFromFile(msg, stickerPath);
-                        console.log('Sticker sent successfully');
-                        
-                        // Add a delay after sending sticker to allow connection to stabilize
-                        await new Promise(resolve => setTimeout(resolve, 2000));
-                    } catch (stickerError) {
-                        console.error('Failed to send sticker:', stickerError);
+                        // Send text response first
                         await retryOperation(async () => {
-                            await msg.reply('Maaf, terjadi kesalahan saat mengirim sticker. Pesan izin tetap tercatat.');
+                            await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
                         });
+                        
+                        // Add delay before sticker
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        
+                        const stickerPath = path.join(__dirname, 'public', 'assets', 'stickers', 'izin.jpeg');
+                        
+                        try {
+                            await sendStickerFromFile(msg, stickerPath);
+                            console.log('Sticker sent successfully');
+                            
+                            // Add delay after sending sticker
+                            await new Promise(resolve => setTimeout(resolve, 2000));
+                        } catch (stickerError) {
+                            console.error('Failed to send sticker:', stickerError);
+                            await retryOperation(async () => {
+                                await msg.reply('Maaf, terjadi kesalahan saat mengirim sticker. Pesan izin tetap tercatat.');
+                            });
+                        }
+                    } catch (error) {
+                        console.error('Error in !izin command:', error);
+                        await handleReconnect();
                     }
                     return;
                 }
@@ -818,7 +789,6 @@ client.on('message', async msg => {
         }
     } catch (error) {
         console.error('Critical error in message handler:', error);
-        // Try to reconnect on critical errors
         await handleReconnect();
     }
 });
