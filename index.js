@@ -474,8 +474,7 @@ const client = new Client({
         waitForInitialPage: true,
         handleSIGINT: false,
         handleSIGTERM: false,
-        handleSIGHUP: false,
-        userDataDir: '/tmp/puppeteer_dev_profile'
+        handleSIGHUP: false
     },
     webVersion: '2.2408.52',
     webVersionCache: {
@@ -1145,30 +1144,23 @@ async function initializeClient() {
             console.log('No existing client to destroy');
         }
         
-        // Clean up browser profile and lock files
-        const profilePath = '/tmp/puppeteer_dev_profile';
-        const sessionPath = '/app/sessions/session-bot-whatsapp';
-        const lockFile = path.join(sessionPath, 'SingletonLock');
-        
+        // Clean up and prepare sessions directory
+        const sessionsPath = '/app/sessions';
         try {
-            // Remove existing profile directory
-            await fs.rm(profilePath, { recursive: true, force: true }).catch(() => {});
+            // Remove existing session data
+            await fs.rm(sessionsPath, { recursive: true, force: true }).catch(() => {});
+            console.log('Cleaned up existing session data');
             
-            // Remove SingletonLock file if it exists
-            await fs.unlink(lockFile).catch(() => {});
-            
-            // Create fresh profile directory with proper permissions
-            await fs.mkdir(profilePath, { recursive: true });
-            await fs.chmod(profilePath, 0o777).catch(() => {});
-            
-            // Ensure sessions directory exists with proper permissions
-            await fs.mkdir('/app/sessions', { recursive: true });
-            await fs.chmod('/app/sessions', 0o777).catch(() => {});
+            // Create fresh sessions directory with proper permissions
+            await fs.mkdir(sessionsPath, { recursive: true });
+            await fs.chmod(sessionsPath, 0o777).catch(() => {});
+            await fs.mkdir(path.join(sessionsPath, '.store'), { recursive: true });
             
             // Small delay to ensure file system operations complete
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            console.log('Created fresh sessions directory');
         } catch (error) {
-            console.error('Error cleaning up profile:', error);
+            console.error('Error managing sessions directory:', error);
         }
         
         // Initialize with retry logic
@@ -1183,9 +1175,6 @@ async function initializeClient() {
                 if (initAttempts > 0) {
                     await new Promise(resolve => setTimeout(resolve, 5000));
                 }
-                
-                // Clean up SingletonLock before each attempt
-                await fs.unlink(lockFile).catch(() => {});
                 
                 await client.initialize();
                 
@@ -1214,9 +1203,10 @@ async function initializeClient() {
                 
                 // Clean up after failed attempt
                 await client.destroy().catch(() => {});
-                await fs.unlink(lockFile).catch(() => {});
                 
                 if (initAttempts === maxInitAttempts) {
+                    // On final failure, ensure sessions are cleaned up
+                    await fs.rm(sessionsPath, { recursive: true, force: true }).catch(() => {});
                     throw error;
                 }
             }
@@ -1230,14 +1220,13 @@ async function initializeClient() {
 // Update the startBot function
 async function startBot() {
     try {
-        // Check if sessions directory exists and has content
+        // Always start fresh by cleaning up any existing session
         const sessionsPath = '/app/sessions';
         try {
-            await fs.access(path.join(sessionsPath, 'bot-whatsapp'));
-            botState.sessionExists = true;
-            console.log('Existing session found');
+            await fs.rm(sessionsPath, { recursive: true, force: true }).catch(() => {});
+            console.log('Cleaned up existing sessions');
         } catch (error) {
-            console.log('No existing session found');
+            console.log('No existing sessions to clean up');
         }
 
         await initializeClient();
