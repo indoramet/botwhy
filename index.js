@@ -286,11 +286,8 @@ setInterval(processMessageQueue, DELAY_BETWEEN_MESSAGES);
 const client = new Client({
     authStrategy: new LocalAuth({
         clientId: 'bot-whatsapp',
-        dataPath: '/app/sessions',
-        backupSyncIntervalMs: 300000,
-        dataStore: {
-            storePath: '/app/sessions/.store'
-        }
+        dataPath: './sessions',
+        backupSyncIntervalMs: 300000
     }),
     puppeteer: {
         headless: true,
@@ -298,45 +295,45 @@ const client = new Client({
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--single-process',
             '--disable-gpu',
-            '--disable-extensions',
-            '--disable-software-rasterizer',
-            '--disable-features=site-per-process',
-            '--disable-dev-shm-usage',
             '--disable-web-security',
-            '--disable-features=IsolateOrigins,site-per-process',
+            '--aggressive-cache-discard',
+            '--disable-cache',
+            '--disable-application-cache',
+            '--disable-offline-load-stale-cache',
+            '--disk-cache-size=0',
+            '--disable-background-networking',
+            '--disable-default-apps',
+            '--disable-extensions',
+            '--disable-sync',
+            '--disable-translate',
+            '--hide-scrollbars',
+            '--metrics-recording-only',
+            '--mute-audio',
+            '--no-first-run',
+            '--safebrowsing-disable-auto-update',
+            '--ignore-certificate-errors',
+            '--ignore-ssl-errors',
+            '--ignore-certificate-errors-spki-list',
             '--window-size=1280,720'
         ],
         defaultViewport: {
             width: 1280,
-            height: 720,
-            deviceScaleFactor: 1,
-            hasTouch: false,
-            isLandscape: true,
-            isMobile: false
+            height: 720
         },
         executablePath: process.env.CHROME_BIN || '/usr/bin/chromium',
-        browserWSEndpoint: null,
         ignoreHTTPSErrors: true,
-        timeout: 60000,
-        protocolTimeout: 60000
+        timeout: 120000,
+        protocolTimeout: 120000
     },
     webVersion: '2.2408.52',
-    webVersionCache: {
-        type: 'none'
-    },
     restartOnAuthFail: true,
-    qrMaxRetries: 3,
-    authTimeoutMs: 60000,
-    qrTimeoutMs: 60000,
+    qrMaxRetries: 5,
+    authTimeoutMs: 120000,
+    qrTimeoutMs: 120000,
     takeoverOnConflict: true,
-    takeoverTimeoutMs: 0,
-    bypassCSP: true,
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+    takeoverTimeoutMs: 120000,
+    bypassCSP: true
 });
 
 // Track bot state
@@ -345,7 +342,8 @@ let botState = {
     isAuthenticated: false,
     lastQR: null,
     sessionExists: false,
-    reconnectAttempts: 0
+    reconnectAttempts: 0,
+    lastPing: Date.now()
 };
 
 // Socket connection handling
@@ -677,7 +675,7 @@ async function initializeClient() {
         console.log('Starting WhatsApp client initialization...');
         
         // Ensure sessions directory exists
-        const sessionsPath = '/app/sessions';
+        const sessionsPath = './sessions';
         try {
             await fs.access(sessionsPath);
             console.log('Sessions directory exists');
@@ -687,7 +685,7 @@ async function initializeClient() {
         }
 
         // Ensure store directory exists
-        const storePath = '/app/sessions/.store';
+        const storePath = './sessions/.store';
         try {
             await fs.access(storePath);
             console.log('Store directory exists');
@@ -739,37 +737,51 @@ async function initializeClient() {
 // Add reconnection handler
 async function handleReconnect() {
     const MAX_RECONNECT_ATTEMPTS = 5;
-    const RECONNECT_INTERVAL = 60000; // 1 minute
-
-    if (!botState.reconnectAttempts) {
-        botState.reconnectAttempts = 0;
-    }
+    const RECONNECT_INTERVAL = 30000; // 30 seconds
 
     if (botState.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
         console.log('Max reconnection attempts reached, restarting process...');
-        process.exit(1);
+        process.exit(1); // Railway will automatically restart the process
     }
 
     botState.reconnectAttempts++;
     console.log(`Attempting to reconnect (attempt ${botState.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
 
     try {
-        await client.destroy();
-        console.log('Previous client instance destroyed');
-    } catch (error) {
-        console.error('Error destroying previous client instance:', error);
-    }
-
-    // Wait before attempting to reconnect
-    await new Promise(resolve => setTimeout(resolve, RECONNECT_INTERVAL));
-
-    try {
-        await initializeClient();
-        if (botState.isAuthenticated) {
-            botState.reconnectAttempts = 0; // Reset counter on successful reconnection
+        // First try to gracefully destroy the client
+        try {
+            await client.destroy();
+            console.log('Previous client instance destroyed');
+        } catch (destroyError) {
+            console.error('Error destroying previous client instance:', destroyError);
         }
+
+        // Wait before attempting to reconnect
+        await new Promise(resolve => setTimeout(resolve, RECONNECT_INTERVAL));
+
+        // Clear any existing session data if we're having persistent issues
+        if (botState.reconnectAttempts > 2) {
+            try {
+                const sessionsPath = './sessions';
+                await fs.rm(sessionsPath, { recursive: true, force: true });
+                await fs.mkdir(sessionsPath, { recursive: true });
+                console.log('Cleared session data');
+            } catch (error) {
+                console.error('Error clearing sessions:', error);
+            }
+        }
+
+        // Attempt to initialize the client
+        await client.initialize();
+        
+        // If we get here, the connection was successful
+        console.log('Reconnection successful');
+        botState.reconnectAttempts = 0;
+        botState.lastPing = Date.now();
     } catch (error) {
         console.error('Reconnection attempt failed:', error);
+        // Wait a bit before trying again
+        await new Promise(resolve => setTimeout(resolve, 5000));
         await handleReconnect();
     }
 }
@@ -778,7 +790,7 @@ async function handleReconnect() {
 async function startBot() {
     try {
         // Check if sessions directory exists and has content
-        const sessionsPath = '/app/sessions';
+        const sessionsPath = './sessions';
         try {
             await fs.access(path.join(sessionsPath, 'bot-whatsapp'));
             botState.sessionExists = true;
@@ -798,4 +810,20 @@ async function startBot() {
 server.listen(PORT, HOST, () => {
     console.log(`Server running on http://${HOST}:${PORT}`);
     startBot();
-}); 
+});
+
+// Add ping/pong to keep connection alive
+setInterval(async () => {
+    if (botState.isAuthenticated && client.pupPage) {
+        try {
+            await client.pupPage.evaluate(() => navigator.onLine);
+            botState.lastPing = Date.now();
+            console.log('Connection check: OK');
+        } catch (error) {
+            console.log('Connection check failed, attempting to reconnect...');
+            if (Date.now() - botState.lastPing > 30000) { // 30 seconds without successful ping
+                await handleReconnect();
+            }
+        }
+    }
+}, 20000); // Check every 20 seconds 
