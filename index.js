@@ -463,7 +463,8 @@ let botState = {
     isReady: false,
     isAuthenticated: false,
     lastQR: null,
-    sessionExists: false
+    sessionExists: false,
+    reconnectAttempts: 0
 };
 
 // Socket connection handling
@@ -802,6 +803,104 @@ const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0';
 
 // Initialize the client
+async function initializeClient() {
+    try {
+        console.log('Starting WhatsApp client initialization...');
+        
+        // Ensure sessions directory exists
+        const sessionsPath = '/app/sessions';
+        try {
+            await fs.access(sessionsPath);
+            console.log('Sessions directory exists');
+        } catch (error) {
+            console.log('Creating sessions directory...');
+            await fs.mkdir(sessionsPath, { recursive: true });
+        }
+
+        // Ensure store directory exists
+        const storePath = '/app/sessions/.store';
+        try {
+            await fs.access(storePath);
+            console.log('Store directory exists');
+        } catch (error) {
+            console.log('Creating store directory...');
+            await fs.mkdir(storePath, { recursive: true });
+        }
+
+        // Initialize the client
+        try {
+            console.log('Attempting to initialize client...');
+            await client.initialize();
+        } catch (initError) {
+            console.error('Initial initialization failed:', initError);
+            
+            // Only clear data if we haven't authenticated yet and no existing session
+            if (!botState.isAuthenticated && !botState.sessionExists) {
+                console.log('No valid session found, clearing browser data...');
+                try {
+                    const browserDataPath = path.join(sessionsPath, 'bot-whatsapp/Default');
+                    await fs.rm(browserDataPath, { recursive: true, force: true }).catch(() => {});
+                    console.log('Cleared browser data');
+                    
+                    // Try initialization again
+                    console.log('Retrying initialization...');
+                    await client.initialize();
+                } catch (error) {
+                    console.error('Error during data cleanup or reinitialization:', error);
+                    throw error;
+                }
+            } else {
+                // If we have an existing session, just retry initialization
+                console.log('Retrying initialization with existing session...');
+                await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds before retry
+                await client.initialize();
+            }
+        }
+    } catch (error) {
+        console.error('Failed to initialize client:', error);
+        throw error;
+    }
+}
+
+// Add reconnection handler
+async function handleReconnect() {
+    const MAX_RECONNECT_ATTEMPTS = 5;
+    const RECONNECT_INTERVAL = 60000; // 1 minute
+
+    if (!botState.reconnectAttempts) {
+        botState.reconnectAttempts = 0;
+    }
+
+    if (botState.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        console.log('Max reconnection attempts reached, restarting process...');
+        process.exit(1);
+    }
+
+    botState.reconnectAttempts++;
+    console.log(`Attempting to reconnect (attempt ${botState.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+
+    try {
+        await client.destroy();
+        console.log('Previous client instance destroyed');
+    } catch (error) {
+        console.error('Error destroying previous client instance:', error);
+    }
+
+    // Wait before attempting to reconnect
+    await new Promise(resolve => setTimeout(resolve, RECONNECT_INTERVAL));
+
+    try {
+        await initializeClient();
+        if (botState.isAuthenticated) {
+            botState.reconnectAttempts = 0; // Reset counter on successful reconnection
+        }
+    } catch (error) {
+        console.error('Reconnection attempt failed:', error);
+        await handleReconnect();
+    }
+}
+
+// Update the startBot function
 async function startBot() {
     try {
         // Check if sessions directory exists and has content
