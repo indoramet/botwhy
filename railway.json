@@ -8,11 +8,17 @@
   "deploy": {
     "startCommand": "/app/start.sh",
     "healthcheckPath": "/health",
-    "healthcheckTimeout": 300,
+    "healthcheckTimeout": 600,
+    "healthcheckInterval": 30,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10,
     "numReplicas": 1,
     "sleepApplication": false,
-    "healthcheckEnabled": true
+    "healthcheckEnabled": true,
+    "startupTimeout": 600,
+    "startupProbe": {
+      "failureThreshold": 30,
+      "periodSeconds": 10
+    }
   }
 } 

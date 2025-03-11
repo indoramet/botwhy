@@ -359,8 +359,62 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 // Health check endpoint
-app.get('/health', (req, res) => {
-    res.status(200).send('OK');
+app.get('/health', async (req, res) => {
+    try {
+        // Basic server health check
+        if (!server.listening) {
+            console.log('Health check failed: Server not listening');
+            return res.status(503).json({
+                status: 'error',
+                message: 'Server not listening'
+            });
+        }
+
+        // Check if client exists
+        if (!client) {
+            console.log('Health check failed: WhatsApp client not initialized');
+            return res.status(503).json({
+                status: 'error',
+                message: 'WhatsApp client not initialized'
+            });
+        }
+
+        // Check if client is ready or authenticated
+        if (!isReady && !isAuthenticated) {
+            console.log('Health check failed: Client not ready or authenticated');
+            return res.status(503).json({
+                status: 'error',
+                message: 'Client not ready or authenticated'
+            });
+        }
+
+        // Check if page exists and is responsive
+        try {
+            if (client.pupPage) {
+                await client.pupPage.evaluate(() => true);
+            }
+        } catch (error) {
+            console.log('Health check failed: Page not responsive');
+            return res.status(503).json({
+                status: 'error',
+                message: 'Page not responsive'
+            });
+        }
+
+        // All checks passed
+        console.log('Health check passed');
+        return res.status(200).json({
+            status: 'ok',
+            ready: isReady,
+            authenticated: isAuthenticated
+        });
+    } catch (error) {
+        console.error('Health check error:', error);
+        return res.status(503).json({
+            status: 'error',
+            message: error.message
+        });
+    }
 });
 
 // Serve static files

@@ -89,15 +89,23 @@ pkill -f dbus-daemon\n\
 # Remove any existing lock files\n\
 rm -f /tmp/.X99-lock\n\
 rm -f /var/run/dbus/pid\n\
+rm -f /tmp/.X*-lock\n\
+rm -f /tmp/.X11-unix/X*\n\
 \n\
 # Setup DBus\n\
 mkdir -p /var/run/dbus\n\
 dbus-daemon --system --fork\n\
-sleep 2\n\
+sleep 5\n\
 \n\
-# Setup display\n\
-Xvfb :99 -screen 0 1280x900x16 -ac &\n\
-sleep 2\n\
+# Setup display with more color depth\n\
+Xvfb :99 -screen 0 1280x900x24 -ac &\n\
+sleep 5\n\
+\n\
+# Verify Xvfb is running\n\
+if ! ps aux | grep -v grep | grep Xvfb > /dev/null; then\n\
+    echo "Failed to start Xvfb"\n\
+    exit 1\n\
+fi\n\
 \n\
 # Setup persistent storage\n\
 if [ -d "/data/sessions" ]; then\n\
@@ -116,8 +124,12 @@ fi\n\
 chmod -R 777 /data/sessions\n\
 chmod -R 777 /app/sessions\n\
 \n\
-# Start the application\n\
-exec node index.js' > /app/start.sh && \
+# Create health check flag file\n\
+touch /tmp/.startup_complete\n\
+\n\
+# Start the application with proper error handling\n\
+exec node index.js 2>&1 | tee /var/log/app.log\n\
+' > /app/start.sh && \
     chmod +x /app/start.sh
 
 # Expose port
