@@ -336,16 +336,16 @@ const client = new Client({
         },
         executablePath: process.env.CHROME_BIN || '/usr/bin/chromium',
         ignoreHTTPSErrors: true,
-        timeout: 60000,
-        protocolTimeout: 60000
+        timeout: 30000,
+        protocolTimeout: 30000
     },
-    webVersion: '2.2245.9',
-    restartOnAuthFail: true,
-    qrMaxRetries: 5,
-    authTimeoutMs: 60000,
-    qrTimeoutMs: 60000,
-    takeoverOnConflict: true,
-    takeoverTimeoutMs: 60000,
+    webVersion: '2.2214.13',
+    restartOnAuthFail: false,
+    qrMaxRetries: 3,
+    authTimeoutMs: 30000,
+    qrTimeoutMs: 30000,
+    takeoverOnConflict: false,
+    takeoverTimeoutMs: 30000,
     bypassCSP: true
 });
 
@@ -439,20 +439,51 @@ client.on('authenticated', async () => {
     
     console.log('Authentication successful, proceeding with initialization...');
     
-    // Set a timeout for reaching ready state
+    // Clear any existing handlers to prevent duplicates
+    client.removeAllListeners('message');
+    client.removeAllListeners('message_create');
+    
+    // Initialize message handling
+    console.log('Setting up message handlers...');
+    setupMessageHandlers();
+    console.log('Message handlers set up successfully');
+    
+    // Set a shorter timeout for reaching ready state
     const readyTimeout = setTimeout(async () => {
-        console.log('Ready state timeout reached, attempting recovery...');
+        console.log('Ready state timeout reached, checking WhatsApp Web state...');
+        try {
+            const page = client.pupPage;
+            if (!page) {
+                throw new Error('No pupPage available');
+            }
+            
+            const state = await page.evaluate(() => {
+                return {
+                    hasStore: !!window.Store,
+                    hasWap: !!window.Store?.Wap,
+                    hasStream: !!window.Store?.Stream,
+                    hasConn: !!window.Store?.Conn,
+                    isConnected: window.Store?.Conn?.connected
+                };
+            });
+            
+            console.log('WhatsApp Web state:', state);
+            
+            if (state.hasStore && state.hasWap && state.hasStream && state.isConnected) {
+                console.log('WhatsApp Web appears to be ready despite timeout, proceeding...');
+                client.emit('ready');
+                return;
+            }
+        } catch (error) {
+            console.error('Error checking WhatsApp Web state:', error);
+        }
+        
         await handleReconnect();
-    }, 30000);
+    }, 15000);
     
     client.once('ready', () => {
         clearTimeout(readyTimeout);
     });
-    
-    // Initialize message handling immediately
-    console.log('Setting up message handlers...');
-    setupMessageHandlers();
-    console.log('Message handlers set up successfully');
 });
 
 // Separate function for message handlers setup
@@ -589,7 +620,14 @@ async function handleReconnect() {
     const MAX_RECONNECT_ATTEMPTS = 3;
     
     if (botState.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-        console.log('Max reconnection attempts reached, restarting process...');
+        console.log('Max reconnection attempts reached, clearing session and restarting...');
+        try {
+            // Clear the sessions directory
+            await fs.rm('./sessions', { recursive: true, force: true });
+            console.log('Sessions directory cleared');
+        } catch (error) {
+            console.error('Error clearing sessions:', error);
+        }
         process.exit(1);
     }
 
@@ -611,11 +649,11 @@ async function handleReconnect() {
         // Initialize again
         await client.initialize();
         
-        // Wait for either authenticated or ready event
+        // Wait for either authenticated or ready event with a shorter timeout
         await new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
                 reject(new Error('Reconnection timeout'));
-            }, 30000);
+            }, 20000);
             
             const handleSuccess = () => {
                 clearTimeout(timeout);
@@ -629,7 +667,6 @@ async function handleReconnect() {
     } catch (error) {
         console.error('Reconnection attempt failed:', error);
         if (botState.reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-            // Wait before trying again
             await new Promise(resolve => setTimeout(resolve, 5000));
             await handleReconnect();
         }
