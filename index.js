@@ -414,15 +414,19 @@ io.on('connection', (socket) => {
 
 // Update client event handlers
 client.on('qr', async (qr) => {
-    if (botState.isAuthenticated) {
-        console.log('QR received while authenticated, ignoring...');
+    console.log('QR RECEIVED, checking authentication state...');
+    
+    // Double check authentication state
+    if (botState.isAuthenticated || botState.isReady) {
+        console.log('Already authenticated, ignoring QR code');
         return;
     }
-    console.log('QR RECEIVED');
+
     try {
         const qrImage = await QRCode.toDataURL(qr);
         botState.lastQR = `<img src="${qrImage}" alt="QR Code" />`;
         io.emit('qr', botState.lastQR);
+        console.log('QR code emitted to client');
     } catch (err) {
         console.error('Error generating QR code:', err);
     }
@@ -431,47 +435,62 @@ client.on('qr', async (qr) => {
 client.on('authenticated', async () => {
     console.log('Client authenticated');
     botState.isAuthenticated = true;
-    botState.lastQR = null;
+    botState.lastQR = null; // Clear QR code
     io.emit('authenticated');
     
-    // Proceed with initialization immediately
-    console.log('Authentication successful, proceeding with initialization...');
+    // Force clear any existing intervals
+    if (global.pingInterval) {
+        clearInterval(global.pingInterval);
+        global.pingInterval = null;
+    }
     
-    // Start connection check
+    // Start fresh connection check
     startConnectionCheck();
     
-    // Load chats in background
-    client.getChats().catch(error => {
-        console.error('Error loading initial chats:', error);
-    });
+    // Try to initialize immediately
+    try {
+        console.log('Authentication successful, initializing client...');
+        if (!botState.isReady) {
+            // Load chats in background
+            client.getChats().catch(error => {
+                console.error('Error loading initial chats:', error);
+            });
+            
+            // Verify connection
+            const page = client.pupPage;
+            if (page) {
+                await page.evaluate(() => console.log('Page is responsive after authentication'));
+            }
+        }
+    } catch (error) {
+        console.error('Error during post-authentication initialization:', error);
+    }
 });
 
 client.on('ready', async () => {
-    console.log('Client is ready');
+    console.log('Client is ready!');
     botState.isReady = true;
+    botState.isAuthenticated = true;
     botState.reconnectAttempts = 0;
     io.emit('ready');
     
     try {
-        // Simple connection test
+        // Verify WhatsApp connection
         const page = client.pupPage;
         if (page) {
-            await page.evaluate(() => console.log('Page is responsive'));
+            await page.evaluate(() => {
+                console.log('WhatsApp Web page is fully loaded');
+                return true;
+            });
         }
         
-        // Send test message to verify message handling
-        const testNumber = '123456@c.us';
-        try {
-            await client.sendMessage(testNumber, 'Test message').catch(() => {
-                console.log('Test message failed - this is expected');
-            });
-            console.log('Message system is working');
-        } catch (error) {
-            console.log('Test message failed - this is expected');
-        }
+        // Load initial chats
+        const chats = await client.getChats();
+        console.log(`Loaded ${chats.length} chats successfully`);
         
     } catch (error) {
         console.error('Error in ready event:', error);
+        // Don't throw the error, just log it
     }
 });
 
@@ -499,20 +518,38 @@ async function handleReconnect() {
     }
 }
 
-// Simplify connection check
+// Update connection check to be more robust
 function startConnectionCheck() {
     if (global.pingInterval) {
         clearInterval(global.pingInterval);
+        global.pingInterval = null;
     }
     
     global.pingInterval = setInterval(async () => {
+        if (!botState.isAuthenticated) {
+            console.log('Not authenticated, skipping connection check');
+            return;
+        }
+        
         try {
-            if (!client.pupPage) return;
-            await client.pupPage.evaluate(() => navigator.onLine);
+            if (!client.pupPage) {
+                throw new Error('No pupPage available');
+            }
+            
+            const isOnline = await client.pupPage.evaluate(() => {
+                return window.Store && window.Store.State ? true : false;
+            });
+            
+            if (!isOnline) {
+                throw new Error('WhatsApp Store not available');
+            }
+            
             botState.lastPing = Date.now();
+            console.log('Connection verified:', new Date().toISOString());
         } catch (error) {
             console.log('Connection check failed:', error.message);
             if (Date.now() - botState.lastPing > 60000) {
+                console.log('Connection lost for over 60 seconds, attempting to reconnect...');
                 handleReconnect();
             }
         }
