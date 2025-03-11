@@ -408,87 +408,180 @@ setInterval(() => {
 
 setInterval(processMessageQueue, DELAY_BETWEEN_MESSAGES);
 
-const client = new Client({
-    authStrategy: new LocalAuth({
-        clientId: 'bot-whatsapp',
-        dataPath: process.env.RAILWAY_VOLUME_MOUNT ? '/data/sessions' : '/app/sessions',
-        backupSyncIntervalMs: 300000
-    }),
-    puppeteer: {
-        headless: true,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--disable-software-rasterizer',
-            '--disable-web-security',
-            '--disable-features=IsolateOrigins,site-per-process',
-            '--disable-site-isolation-trials',
-            '--no-experiments',
-            '--ignore-certificate-errors',
-            '--ignore-certificate-errors-spki-list',
-            '--disable-extensions',
-            '--disable-setuid-sandbox',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--deterministic-fetch',
-            '--disable-features=AudioServiceOutOfProcess',
-            '--disable-features=LazyFrameLoading',
-            '--window-size=1280,900',
-            '--single-process',
-            '--no-sandbox',
-            '--disable-notifications',
-            '--disable-desktop-notifications',
-            '--no-default-browser-check',
-            '--autoplay-policy=no-user-gesture-required',
-            '--disable-features=TranslateUI',
-            '--disable-features=GlobalMediaControls',
-            '--disable-features=DestroyProfileOnBrowserClose',
-            '--disable-features=MediaRouter',
-            '--disable-features=OptimizationHints',
-            '--disable-features=ProcessPerSiteUpToMainFrameThreshold',
-            '--disable-features=Translate',
-            '--disable-features=WakeLockScreenSaver',
-            '--disable-features=WebOTP',
-            '--disable-features=WebPayments',
-            '--disable-features=WebUSB',
-            '--disable-features=WebXR'
-        ],
-        defaultViewport: {
-            width: 1280,
-            height: 900,
-            deviceScaleFactor: 1,
-            hasTouch: false,
-            isLandscape: true,
-            isMobile: false
-        },
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
-        ignoreHTTPSErrors: true,
-        timeout: 180000,
-        protocolTimeout: 180000,
-        waitForInitialPage: true,
-        handleSIGINT: false,
-        handleSIGTERM: false,
-        handleSIGHUP: false,
-        pipe: true,
-        dumpio: true,
-        userDataDir: null
-    },
-    webVersion: '2.2408.52',
-    webVersionCache: {
-        type: 'none'
-    },
-    restartOnAuthFail: true,
-    qrMaxRetries: 5,
-    authTimeoutMs: 0,
-    qrTimeoutMs: 60000,
-    takeoverOnConflict: true,
-    takeoverTimeoutMs: 0,
-    bypassCSP: true,
-    linkPreviewApiServers: ['https://preview.whatsapp.com/api/v1/preview']
-});
+// Initialize state variables
+let isReady = false;
+let isAuthenticated = false;
+let lastQR = '';
+let initializationAttempts = 0;
+const MAX_INIT_ATTEMPTS = 3;
+const INIT_RETRY_DELAY = 10000; // 10 seconds
+
+// Ensure sessions directory exists
+const sessionsPath = process.env.RAILWAY_VOLUME_MOUNT ? '/data/sessions' : '/app/sessions';
+if (!fs.existsSync(sessionsPath)) {
+    fs.mkdirSync(sessionsPath, { recursive: true });
+}
+
+// Function to verify client state
+async function verifyClientState(client) {
+    let retries = 0;
+    const maxRetries = 5;
+    const retryDelay = 2000;
+
+    while (retries < maxRetries) {
+        try {
+            if (!client || !client.pupPage || !client.info) {
+                console.log(`[Attempt ${retries + 1}/${maxRetries}] Waiting for client state...`);
+                await new Promise(resolve => setTimeout(resolve, retryDelay));
+                retries++;
+                continue;
+            }
+
+            const page = await client.pupPage;
+            if (!page) {
+                throw new Error('Page not available');
+            }
+
+            const info = await client.info;
+            if (!info) {
+                throw new Error('Client info not available');
+            }
+
+            console.log('Client state verified successfully');
+            return true;
+        } catch (error) {
+            console.error(`Verification attempt ${retries + 1} failed:`, error.message);
+            retries++;
+            if (retries >= maxRetries) {
+                throw new Error('Failed to verify client state after maximum retries');
+            }
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
+        }
+    }
+    return false;
+}
+
+// Function to initialize client
+async function initializeClient() {
+    // Reset state
+    isReady = false;
+    isAuthenticated = false;
+    lastQR = '';
+    
+    try {
+        console.log('Initializing WhatsApp client...');
+        
+        // Create client with updated configuration
+        const client = new Client({
+            authStrategy: new LocalAuth({
+                clientId: "whatsapp-bot",
+                dataPath: sessionsPath
+            }),
+            puppeteer: {
+                headless: true,
+                args: [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-accelerated-2d-canvas',
+                    '--disable-gpu',
+                    '--window-size=1280,900',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding',
+                    '--no-first-run',
+                    '--disable-features=site-per-process',
+                    '--disable-web-security'
+                ],
+                defaultViewport: null,
+                executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+                timeout: 120000,
+                protocolTimeout: 120000
+            },
+            qrMaxRetries: 5,
+            takeoverOnConflict: true,
+            takeoverTimeoutMs: 120000
+        });
+
+        // Add event listeners
+        client.on('qr', (qr) => {
+            console.log('QR Code received');
+            lastQR = qr;
+        });
+
+        client.on('ready', async () => {
+            console.log('Client is ready');
+            isReady = true;
+            isAuthenticated = true;
+            lastQR = '';
+        });
+
+        client.on('authenticated', () => {
+            console.log('Client is authenticated');
+            isAuthenticated = true;
+            lastQR = '';
+        });
+
+        client.on('auth_failure', (msg) => {
+            console.error('Authentication failed:', msg);
+            isAuthenticated = false;
+        });
+
+        client.on('disconnected', (reason) => {
+            console.log('Client was disconnected:', reason);
+            isReady = false;
+            isAuthenticated = false;
+            handleReconnect();
+        });
+
+        // Initialize client
+        await client.initialize();
+        
+        // Wait for initial setup
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        // Verify client state
+        await verifyClientState(client);
+        
+        console.log('Client initialization completed successfully');
+        return client;
+    } catch (error) {
+        console.error('Error during client initialization:', error);
+        throw error;
+    }
+}
+
+// Function to handle client initialization with retries
+async function initializeWithRetries() {
+    while (initializationAttempts < MAX_INIT_ATTEMPTS) {
+        try {
+            initializationAttempts++;
+            console.log(`Attempting client initialization (Attempt ${initializationAttempts}/${MAX_INIT_ATTEMPTS})`);
+            
+            const client = await initializeClient();
+            initializationAttempts = 0; // Reset counter on success
+            return client;
+        } catch (error) {
+            console.error(`Initialization attempt ${initializationAttempts} failed:`, error.message);
+            
+            if (initializationAttempts >= MAX_INIT_ATTEMPTS) {
+                throw new Error('Failed to initialize client after maximum attempts');
+            }
+            
+            console.log(`Waiting ${INIT_RETRY_DELAY/1000} seconds before next attempt...`);
+            await new Promise(resolve => setTimeout(resolve, INIT_RETRY_DELAY));
+        }
+    }
+}
+
+// Start the client
+let client;
+try {
+    client = await initializeWithRetries();
+} catch (error) {
+    console.error('Failed to start WhatsApp client:', error);
+    process.exit(1);
+}
 
 // Track bot state
 let botState = {
@@ -896,79 +989,6 @@ app.get('/login', (req, res) => {
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0';
 
-// Initialize the client
-async function initializeClient() {
-    try {
-        console.log('Starting WhatsApp client initialization...');
-        
-        // Reset bot state
-        botState.isReady = false;
-        botState.isAuthenticated = false;
-        botState.lastQR = null;
-        
-        // Ensure sessions directory exists
-        const sessionsPath = process.env.RAILWAY_VOLUME_MOUNT ? '/data/sessions' : '/app/sessions';
-        try {
-            await fs.access(sessionsPath);
-            console.log('Sessions directory exists');
-        } catch (error) {
-            console.log('Creating sessions directory...');
-            await fs.mkdir(sessionsPath, { recursive: true });
-        }
-
-        // Initialize the client with enhanced retry logic
-        let initAttempts = 0;
-        const maxInitAttempts = 3;
-
-        while (initAttempts < maxInitAttempts) {
-            try {
-                console.log(`Attempting to initialize client (attempt ${initAttempts + 1}/${maxInitAttempts})...`);
-                
-                // Clean up any existing browser instances
-                if (client.pupBrowser) {
-                    console.log('Closing existing browser instance...');
-                    await client.pupBrowser.close().catch(() => {});
-                }
-                
-                // Wait before initialization
-                console.log('Waiting before initialization...');
-                await new Promise(resolve => setTimeout(resolve, 5000));
-                
-                // Initialize with detailed logging
-                console.log('Starting client initialization...');
-                await client.initialize();
-                console.log('Client initialization completed');
-                
-                // Verify initialization
-                if (!client.pupPage || !client.info) {
-                    throw new Error('Client initialization incomplete - missing page or info');
-                }
-                
-                // Test page connection
-                await client.pupPage.evaluate(() => true);
-                console.log('Page connection verified');
-                
-                console.log('Client initialized successfully');
-                break;
-            } catch (initError) {
-                initAttempts++;
-                console.error(`Initialization attempt ${initAttempts} failed:`, initError);
-
-                if (initAttempts === maxInitAttempts) {
-                    throw initError;
-                }
-
-                // Wait longer before retrying
-                console.log(`Waiting ${10} seconds before retry...`);
-                await new Promise(resolve => setTimeout(resolve, 10000));
-            }
-        }
-    } catch (error) {
-        console.error('Failed to initialize client:', error);
-        throw error;
-    }
-}
-
 // Add reconnection handler
 async function handleReconnect() {
     const MAX_RECONNECT_ATTEMPTS = 5;
@@ -1039,26 +1059,6 @@ async function handleReconnect() {
         // Add longer delay before recursive call
         await new Promise(resolve => setTimeout(resolve, 30000));
         await handleReconnect();
-    }
-}
-
-// Update the startBot function
-async function startBot() {
-    try {
-        // Check if sessions directory exists and has content
-        const sessionsPath = process.env.RAILWAY_VOLUME_MOUNT ? '/data/sessions' : '/app/sessions';
-        try {
-            await fs.access(path.join(sessionsPath, 'bot-whatsapp'));
-            botState.sessionExists = true;
-            console.log('Existing session found');
-        } catch (error) {
-            console.log('No existing session found');
-        }
-
-        await initializeClient();
-    } catch (error) {
-        console.error('Error starting bot:', error);
-        process.exit(1);
     }
 }
 

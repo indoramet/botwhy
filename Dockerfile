@@ -72,17 +72,28 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     DBUS_SESSION_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket \
     PORT=3000 \
     RAILWAY_VOLUME_MOUNT=/data \
-    RAILWAY_STATIC_URL=$RAILWAY_STATIC_URL
+    RAILWAY_STATIC_URL=$RAILWAY_STATIC_URL \
+    NODE_ENV=production
 
 # Create data directory for Railway persistent storage
 RUN mkdir -p /data && chmod 777 /data
 
 # Create a wrapper script to start dbus, Xvfb and the application
 RUN echo '#!/bin/bash\n\
+# Cleanup any existing processes\n\
+pkill -f chrome\n\
+pkill -f chromium\n\
+pkill -f Xvfb\n\
+pkill -f dbus-daemon\n\
+\n\
+# Remove any existing lock files\n\
+rm -f /tmp/.X99-lock\n\
+rm -f /var/run/dbus/pid\n\
+\n\
 # Setup DBus\n\
 mkdir -p /var/run/dbus\n\
-rm -f /var/run/dbus/pid\n\
 dbus-daemon --system --fork\n\
+sleep 2\n\
 \n\
 # Setup display\n\
 Xvfb :99 -screen 0 1280x900x16 -ac &\n\
@@ -100,6 +111,10 @@ else\n\
     rm -rf /app/sessions\n\
     ln -s /data/sessions /app/sessions\n\
 fi\n\
+\n\
+# Ensure proper permissions\n\
+chmod -R 777 /data/sessions\n\
+chmod -R 777 /app/sessions\n\
 \n\
 # Start the application\n\
 exec node index.js' > /app/start.sh && \
