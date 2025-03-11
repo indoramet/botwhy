@@ -428,11 +428,22 @@ client.on('qr', async (qr) => {
     }
 });
 
-client.on('authenticated', () => {
+client.on('authenticated', async () => {
     console.log('Client authenticated');
     botState.isAuthenticated = true;
     botState.lastQR = null;
     io.emit('authenticated');
+    
+    // Force a quick reconnection after authentication
+    try {
+        console.log('Forcing reconnection to ensure message listener is attached...');
+        await client.destroy();
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        await client.initialize();
+        console.log('Reconnection successful');
+    } catch (error) {
+        console.error('Error during forced reconnection:', error);
+    }
 });
 
 client.on('ready', async () => {
@@ -844,4 +855,15 @@ setInterval(async () => {
             }
         }
     }
-}, 20000); // Check every 20 seconds 
+}, 20000); // Check every 20 seconds
+
+// Add message received debug event
+client.on('message_create', async (msg) => {
+    console.log('Debug - Raw message event:', {
+        fromMe: msg.fromMe,
+        from: msg.from,
+        to: msg.to,
+        body: msg.body,
+        timestamp: new Date().toISOString()
+    });
+}); 
