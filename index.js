@@ -635,15 +635,15 @@ client.on('message', async msg => {
         const chat = await msg.getChat();
         const isGroup = Boolean(chat.isGroup);
         
-        // Get client info if not already available
-        const clientInfo = await client.getWid();
-        const botNumber = clientInfo._serialized;
+        // Get bot's ID from client info
+        const botNumber = client.info.wid._serialized;
         
         console.log('Received message:', {
             from: msg.from,
             body: msg.body,
             isGroup: isGroup,
-            mentionedIds: Array.isArray(msg.mentionedIds) ? msg.mentionedIds : []
+            mentionedIds: Array.isArray(msg.mentionedIds) ? msg.mentionedIds : [],
+            botNumber: botNumber // Log bot number for debugging
         });
 
         const now = Date.now();
