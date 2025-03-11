@@ -660,12 +660,76 @@ process.on('SIGINT', async () => {
 });
 
 let activeSocket = null;
-
 const lastUserMessage = new Map();
 
 // Add heartbeat mechanism and state monitoring
 let lastHeartbeat = Date.now();
 let isClientHealthy = true;
+
+// Add reconnection handler
+async function handleReconnect() {
+    const MAX_RECONNECT_ATTEMPTS = 5;
+    const RECONNECT_INTERVAL = 30000; // 30 seconds
+
+    if (!botState.reconnectAttempts) {
+        botState.reconnectAttempts = 0;
+    }
+
+    if (botState.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        console.log('Max reconnection attempts reached, destroying client and clearing session...');
+        try {
+            await client.destroy();
+            // Clear session data
+            const sessionsPath = '/app/sessions';
+            await fs.rm(sessionsPath, { recursive: true, force: true }).catch(() => {});
+            console.log('Client destroyed and session cleared');
+            process.exit(1); // Force restart
+        } catch (error) {
+            console.error('Error during client cleanup:', error);
+            process.exit(1);
+        }
+    }
+
+    botState.reconnectAttempts++;
+    console.log(`Attempting to reconnect (attempt ${botState.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+
+    try {
+        // First try to destroy the existing client
+        try {
+            await client.destroy();
+            console.log('Previous client instance destroyed');
+        } catch (error) {
+            console.error('Error destroying previous client instance:', error);
+        }
+
+        // Wait before attempting to reconnect
+        console.log(`Waiting ${RECONNECT_INTERVAL/1000} seconds before reconnecting...`);
+        await new Promise(resolve => setTimeout(resolve, RECONNECT_INTERVAL));
+
+        // Initialize new client
+        console.log('Initializing new client...');
+        await initializeClient();
+        
+        // Reset health monitoring
+        lastHeartbeat = Date.now();
+        isClientHealthy = true;
+        
+        // If we get here, reset the reconnect counter
+        if (client.info) {
+            console.log('Reconnection successful!');
+            botState.reconnectAttempts = 0;
+            botState.isReady = true;
+            botState.isAuthenticated = true;
+            return true;
+        }
+    } catch (error) {
+        console.error('Reconnection attempt failed:', error);
+        isClientHealthy = false;
+        // Try again recursively
+        return await handleReconnect();
+    }
+    return false;
+}
 
 // Monitor client health
 setInterval(async () => {
@@ -995,8 +1059,31 @@ async function initializeClient() {
         while (initAttempts < maxInitAttempts) {
             try {
                 console.log(`Attempting to initialize client (attempt ${initAttempts + 1}/${maxInitAttempts})...`);
+                
+                // Reset client state before initialization
+                botState.isReady = false;
+                botState.isAuthenticated = false;
+                isClientHealthy = false;
+                
                 await client.initialize();
                 console.log('Client initialized successfully');
+                
+                // Start health monitoring
+                lastHeartbeat = Date.now();
+                isClientHealthy = true;
+                
+                // Wait for client to be ready
+                await new Promise((resolve, reject) => {
+                    const timeout = setTimeout(() => {
+                        reject(new Error('Client initialization timeout'));
+                    }, 60000); // 60 second timeout
+                    
+                    client.once('ready', () => {
+                        clearTimeout(timeout);
+                        resolve();
+                    });
+                });
+                
                 break;
             } catch (initError) {
                 initAttempts++;
