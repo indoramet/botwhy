@@ -447,8 +447,8 @@ const client = new Client({
     webVersionCache: {
         type: 'none'
     },
-    restartOnAuthFail: true,
-    qrMaxRetries: 5,
+    restartOnAuthFail: false,
+    qrMaxRetries: 0,
     authTimeoutMs: 0,
     qrTimeoutMs: 0,
     takeoverOnConflict: true,
@@ -457,195 +457,27 @@ const client = new Client({
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     linkPreviewApiServers: ['https://preview.whatsapp.com/api/v1/preview']
 });
-    
-let isClientReady = false;
-let isAuthenticated = false;
-let reconnectAttempts = 0;
-const MAX_RECONNECT_ATTEMPTS = 5;
-const RECONNECT_INTERVAL = 60000; // 1 minute
 
-async function initializeClient() {
-    try {
-        console.log('Starting WhatsApp client initialization...');
-        
-        // Ensure sessions directory exists
-        const sessionsPath = '/app/sessions';
-        try {
-            await fs.access(sessionsPath);
-            console.log('Sessions directory exists');
-        } catch (error) {
-            console.log('Creating sessions directory...');
-            await fs.mkdir(sessionsPath, { recursive: true });
-        }
+// Track bot state
+let botState = {
+    isReady: false,
+    isAuthenticated: false,
+    lastQR: null,
+    sessionExists: false
+};
 
-        // Ensure store directory exists
-        const storePath = '/app/sessions/.store';
-        try {
-            await fs.access(storePath);
-            console.log('Store directory exists');
-        } catch (error) {
-            console.log('Creating store directory...');
-            await fs.mkdir(storePath, { recursive: true });
-        }
-        
-        try {
-            console.log('Attempting to initialize client...');
-            await client.initialize();
-        } catch (initError) {
-            console.error('Initial initialization failed:', initError);
-            
-            // Only clear data if we haven't authenticated yet
-            if (!isAuthenticated) {
-                console.log('Clearing browser data for fresh start...');
-                try {
-                    const browserDataPath = path.join(sessionsPath, 'bot-whatsapp/Default');
-                    await fs.rm(browserDataPath, { recursive: true, force: true });
-                    console.log('Cleared browser data');
-                    
-                    // Try initialization again
-                    console.log('Retrying initialization...');
-                    await client.initialize();
-                } catch (error) {
-                    console.error('Error during data cleanup or reinitialization:', error);
-                    throw error;
-                }
-            } else {
-                throw initError;
-            }
-        }
-        
-        // Add a timeout to restart if stuck in connecting state
-        setTimeout(async () => {
-            if (!isClientReady && !isAuthenticated) {
-                console.log('Client stuck in connecting state, attempting restart...');
-                try {
-                    await client.destroy();
-                    console.log('Client destroyed successfully');
-                } catch (error) {
-                    console.error('Error destroying stuck client:', error);
-                }
-                console.log('Exiting process for container restart...');
-                process.exit(1);
-            }
-        }, 300000); // 5 minutes timeout
-    } catch (error) {
-        console.error('Failed to initialize client:', error);
-        if (error.message.includes('Failed to launch') || 
-            error.message.includes('Target closed') || 
-            error.message.includes('Protocol error') ||
-            error.message.includes('Session Closed')) {
-            console.log('Critical initialization error, forcing restart...');
-            process.exit(1);
-        }
-        await handleReconnect();
-    }
-}
-
-async function handleReconnect() {
-    if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-        console.log('Max reconnection attempts reached, restarting process...');
-        process.exit(1);
-    }
-    
-    reconnectAttempts++;
-    console.log(`Attempting to reconnect (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
-    
-    try {
-        await client.destroy();
-        console.log('Previous client instance destroyed');
-    } catch (error) {
-        console.error('Error destroying previous client instance:', error);
-    }
-    
-    setTimeout(async () => {
-        try {
-            await initializeClient();
-        } catch (error) {
-            console.error('Reconnection attempt failed:', error);
-            await handleReconnect();
-        }
-    }, RECONNECT_INTERVAL);
-}
-
-client.on('qr', async (qr) => {
-    if (isAuthenticated) {
-        console.log('QR received while authenticated, ignoring...');
-        return;
-    }
-    console.log('QR RECEIVED');
-    try {
-        const qrImage = await QRCode.toDataURL(qr);
-        io.emit('qr', `<img src="${qrImage}" alt="QR Code" />`);
-    } catch (err) {
-        console.error('Error generating QR code:', err);
-    }
-});
-
-client.on('authenticated', () => {
-    console.log('Client authenticated');
-    isAuthenticated = true;
-    reconnectAttempts = 0;
-    io.emit('authenticated');
-});
-
-client.on('ready', async () => {
-    console.log('Client is ready');
-    isClientReady = true;
-    isAuthenticated = true;
-    reconnectAttempts = 0;
-    
-    try {
-        // Add delay before loading chats
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        const chats = await client.getChats();
-        console.log(`Loaded ${chats.length} chats`);
-        io.emit('ready');
-    } catch (error) {
-        console.error('Error in ready event:', error);
-    }
-});
-
-client.on('disconnected', async (reason) => {
-    console.log('Client disconnected:', reason);
-    isClientReady = false;
-    // Don't reset authentication state here
-    await handleReconnect();
-});
-
-client.on('auth_failure', async () => {
-    console.log('Auth failure, attempting to reconnect...');
-    isClientReady = false;
-    isAuthenticated = false; // Reset authentication state only on auth failure
-    await handleReconnect();
-});
-
-// Handle process signals
-process.on('SIGTERM', async () => {
-    console.log('Received SIGTERM signal');
-    try {
-        await client.destroy();
-        console.log('Client destroyed successfully');
-    } catch (error) {
-        console.error('Error destroying client:', error);
-    }
-    process.exit(0);
-});
-
-process.on('SIGINT', async () => {
-    console.log('Received SIGINT signal');
-    try {
-        await client.destroy();
-        console.log('Client destroyed successfully');
-    } catch (error) {
-        console.error('Error destroying client:', error);
-    }
-    process.exit(0);
-});
-
-let activeSocket = null;
-
+// Socket connection handling
 io.on('connection', (socket) => {
-    console.log('Client connected');
+    console.log('Web client connected');
+    
+    // Send current bot state to new connections
+    if (botState.isReady) {
+        socket.emit('ready');
+    } else if (botState.isAuthenticated) {
+        socket.emit('authenticated');
+    } else if (botState.lastQR && !botState.isAuthenticated) {
+        socket.emit('qr', botState.lastQR);
+    }
     
     socket.on('_x', (data) => {
         if (data._a === _k._a && data._b === _k._b) {
@@ -678,13 +510,94 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         console.log('Web client disconnected');
         _v.delete(socket.id);
-        if (activeSocket === socket) {
+        if (socket === activeSocket) {
             activeSocket = null;
         }
     });
 
     activeSocket = socket;
 });
+
+// Update client event handlers
+client.on('qr', async (qr) => {
+    if (botState.isAuthenticated) {
+        console.log('QR received while authenticated, ignoring...');
+        return;
+    }
+    console.log('QR RECEIVED');
+    try {
+        const qrImage = await QRCode.toDataURL(qr);
+        botState.lastQR = `<img src="${qrImage}" alt="QR Code" />`;
+        io.emit('qr', botState.lastQR);
+    } catch (err) {
+        console.error('Error generating QR code:', err);
+    }
+});
+
+client.on('authenticated', () => {
+    console.log('Client authenticated');
+    botState.isAuthenticated = true;
+    botState.lastQR = null;
+    io.emit('authenticated');
+});
+
+client.on('ready', async () => {
+    console.log('Client is ready');
+    botState.isReady = true;
+    botState.isAuthenticated = true;
+    botState.lastQR = null;
+    
+    try {
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        const chats = await client.getChats();
+        console.log(`Loaded ${chats.length} chats`);
+        io.emit('ready');
+    } catch (error) {
+        console.error('Error in ready event:', error);
+    }
+});
+
+client.on('disconnected', async (reason) => {
+    console.log('Client disconnected:', reason);
+    botState.isReady = false;
+    // Keep authentication state
+    if (!botState.isAuthenticated) {
+        await handleReconnect();
+    } else {
+        // Try to reconnect while preserving session
+        try {
+            await client.initialize();
+        } catch (error) {
+            console.error('Failed to reconnect:', error);
+            await handleReconnect();
+        }
+    }
+});
+
+// Handle process signals
+process.on('SIGTERM', async () => {
+    console.log('Received SIGTERM signal');
+    try {
+        await client.destroy();
+        console.log('Client destroyed successfully');
+    } catch (error) {
+        console.error('Error destroying client:', error);
+    }
+    process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+    console.log('Received SIGINT signal');
+    try {
+        await client.destroy();
+        console.log('Client destroyed successfully');
+    } catch (error) {
+        console.error('Error destroying client:', error);
+    }
+    process.exit(0);
+});
+
+let activeSocket = null;
 
 const lastUserMessage = new Map();
 
@@ -888,9 +801,28 @@ app.get('/login', (req, res) => {
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0';
 
+// Initialize the client
+async function startBot() {
+    try {
+        // Check if sessions directory exists and has content
+        const sessionsPath = '/app/sessions';
+        try {
+            await fs.access(path.join(sessionsPath, 'bot-whatsapp'));
+            botState.sessionExists = true;
+            console.log('Existing session found');
+        } catch (error) {
+            console.log('No existing session found');
+        }
+
+        await initializeClient();
+    } catch (error) {
+        console.error('Error starting bot:', error);
+        process.exit(1);
+    }
+}
+
+// Start the server and bot
 server.listen(PORT, HOST, () => {
     console.log(`Server running on http://${HOST}:${PORT}`);
-});
-
-// Initialize the client
-initializeClient(); 
+    startBot();
+}); 
