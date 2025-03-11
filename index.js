@@ -631,31 +631,52 @@ const lastUserMessage = new Map();
 
 client.on('message', async msg => {
     try {
-        // Wait for client to be ready
+        // Basic message logging
+        console.log('Raw message received:', {
+            from: msg.from,
+            body: msg.body,
+            hasData: !!msg._data
+        });
+
+        // Wait for client to be ready with timeout
+        let retries = 0;
+        while (!client.info && retries < 3) {
+            console.log('Waiting for client info...');
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            retries++;
+        }
+
         if (!client.info) {
-            console.log('Client info not yet available, waiting...');
+            console.log('Client info still not available after waiting');
             return;
         }
 
-        // Get chat and ensure properties are properly accessed
-        const chat = await msg.getChat();
-        const isGroup = Boolean(chat.isGroup);
+        // Get chat with retry
+        let chat;
+        try {
+            chat = await msg.getChat();
+        } catch (error) {
+            console.error('Error getting chat:', error);
+            return;
+        }
+
+        const isGroup = Boolean(chat?.isGroup);
         const botNumber = client.info.wid._serialized;
         
-        // Get mentioned IDs and ensure it's an array
+        // Ensure mentionedJidList is an array
         const mentionedIds = Array.isArray(msg._data?.mentionedJidList) ? msg._data.mentionedJidList : [];
         
-        // Log full message details for debugging
-        console.log('Received message:', {
+        console.log('Message details:', {
             from: msg.from,
             body: msg.body,
             isGroup: isGroup,
-            chatName: chat.name,
+            chatName: chat?.name,
             mentionedIds: mentionedIds,
             botNumber: botNumber,
             hasAtBot: msg.body.toLowerCase().includes('@bot')
         });
 
+        // Rate limiting check
         const now = Date.now();
         const lastTime = lastUserMessage.get(msg.from) || 0;
         
@@ -666,6 +687,7 @@ client.on('message', async msg => {
 
         lastUserMessage.set(msg.from, now);
 
+        // Notify web interface
         if (activeSocket) {
             activeSocket.emit('message', {
                 from: msg.from,
@@ -675,14 +697,7 @@ client.on('message', async msg => {
         }
 
         const command = msg.body.toLowerCase();
-        console.log('Processing command:', command);
 
-        // Check if chat is muted
-        if (chat.isMuted) {
-            console.log('Chat is muted, skipping response:', msg.from);
-            return;
-        }
-        
         // Check for admin commands first
         if (await handleAdminCommand(msg)) {
             console.log('Admin command handled');
@@ -721,18 +736,29 @@ client.on('message', async msg => {
                 cleanCommand = cleanCommand.trim();
             }
             
-            console.log('Clean command:', cleanCommand);
+            console.log('Processing cleaned command:', cleanCommand);
 
-            // Process commands
             try {
-                if (cleanCommand === '!izin') {
+                // Handle commands
+                if (cleanCommand === '!help' || cleanCommand === '!bantuan') {
+                    await msg.reply(`Daftar perintah yang tersedia:
+!jadwal - Informasi jadwal praktikum
+!laporan - Cara upload laporan
+!sesi - Informasi sesi praktikum
+!nilai - Informasi nilai praktikum
+!izin - Informasi izin tidak hadir praktikum
+!asistensi - Informasi jadwal asistensi
+!software - Link download software praktikum
+!template - Link template laporan
+!tugasakhir - Informasi tugas akhir`);
+                }
+                else if (cleanCommand === '!izin') {
                     await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
-                    
-                    const stickerPath = path.join(__dirname, 'public', 'assets', 'stickers', 'izin.jpeg');
                     try {
+                        const stickerPath = path.join(__dirname, 'public', 'assets', 'stickers', 'izin.jpeg');
                         await sendStickerFromFile(msg, stickerPath);
                     } catch (stickerError) {
-                        console.error('Failed to send sticker:', stickerError);
+                        console.error('Sticker error:', stickerError);
                         await msg.reply('Maaf, terjadi kesalahan saat mengirim sticker. Pesan izin tetap tercatat.');
                     }
                 }
@@ -763,56 +789,23 @@ client.on('message', async msg => {
                 else if (cleanCommand === '!laporan' || cleanCommand === 'bagaimana cara upload laporan?') {
                     await msg.reply('Untuk mengupload laporan:\n1. ubah file word laporan menjadi pdf\n2. cek link upload laporan sesuai dengan pertemuan ke berapa command contoh !laporan1\n3. klik link upload laporan\n4. upload laporan\n5. Tunggu sampai kelar\nJANGAN SAMPAI MENGUMPULKAN LAPORAN TERLAMBAT -5%!!!');
                 }
-                else if (cleanCommand === '!laporan1') {
-                    await msg.reply(dynamicCommands.laporan1);
-                }
-                else if (cleanCommand === '!laporan2') {
-                    await msg.reply(dynamicCommands.laporan2);
-                }
-                else if (cleanCommand === '!laporan3') {
-                    await msg.reply(dynamicCommands.laporan3);
-                }
-                else if (cleanCommand === '!laporan4') {
-                    await msg.reply(dynamicCommands.laporan4);
-                }
-                else if (cleanCommand === '!laporan5') {
-                    await msg.reply(dynamicCommands.laporan5);
-                }
-                else if (cleanCommand === '!laporan6') {
-                    await msg.reply(dynamicCommands.laporan6);
-                }
-                else if (cleanCommand === '!laporan7') {
-                    await msg.reply(dynamicCommands.laporan7);
-                }
-                else if (cleanCommand === '!who made you' || cleanCommand === 'siapa yang membuat kamu?') {
-                    await msg.reply('I have been made by @unlovdman atas izin allah\nSaya dibuat oleh @unlovdman atas izin allah');
-                }
-                else if (cleanCommand === '!contact' || cleanCommand === 'gimana saya mengontak anda?') {
-                    await msg.reply('you can visit my portofolio web app https://unlovdman.vercel.app/ for more information');
-                }
-                else if (cleanCommand === '!help' || cleanCommand === '!bantuan') {
-                    await msg.reply(`Daftar perintah yang tersedia:
-!jadwal - Informasi jadwal praktikum
-!laporan - Cara upload laporan
-!sesi - Informasi sesi praktikum
-!nilai - Informasi nilai praktikum
-!izin - Informasi izin tidak hadir praktikum
-!asistensi - Informasi jadwal asistensi
-!software - Link download software praktikum
-!template - Link template laporan
-!tugasakhir - Informasi tugas akhir
-`);
+                else if (cleanCommand.startsWith('!laporan') && /^!laporan[1-7]$/.test(cleanCommand)) {
+                    await msg.reply(dynamicCommands[cleanCommand.substring(1)]);
                 }
             } catch (cmdError) {
-                console.error('Error executing command:', cmdError);
+                console.error('Command execution error:', cmdError);
                 await msg.reply('Maaf, terjadi kesalahan dalam memproses perintah. Silakan coba lagi.');
             }
         } else if (isGroup && command.startsWith('!')) {
-            console.log('Group message without mention, sending hint');
             await msg.reply('Untuk menggunakan bot di grup, mohon mention bot terlebih dahulu.\nContoh: @bot !help');
         }
     } catch (error) {
         console.error('Critical error in message handler:', error);
+        try {
+            await msg.reply('Terjadi kesalahan sistem. Mohon coba lagi dalam beberapa saat.');
+        } catch (replyError) {
+            console.error('Could not send error message:', replyError);
+        }
     }
 });
 
