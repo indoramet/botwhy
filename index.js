@@ -423,7 +423,12 @@ const client = new Client({
             '--enable-features=NetworkService,NetworkServiceInProcess',
             '--force-color-profile=srgb',
             '--disable-features=Translate',
-            '--disable-features=GlobalMediaControls'
+            '--disable-features=GlobalMediaControls',
+            '--disable-crash-reporter',
+            '--disable-breakpad',
+            '--disable-canvas-aa',
+            '--disable-2d-canvas-clip-aa',
+            '--disable-gl-drawing-for-tests'
         ],
         defaultViewport: {
             width: 800,
@@ -549,12 +554,34 @@ client.on('ready', async () => {
     botState.lastQR = null;
     
     try {
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        const chats = await client.getChats();
-        console.log(`Loaded ${chats.length} chats`);
-        io.emit('ready');
+        // Add longer delay before loading chats
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        // Wrap chat loading in retry logic
+        let retries = 0;
+        const maxRetries = 3;
+        
+        while (retries < maxRetries) {
+            try {
+                const chats = await client.getChats();
+                console.log(`Loaded ${chats.length} chats`);
+                io.emit('ready');
+                break;
+            } catch (error) {
+                retries++;
+                console.error(`Error loading chats (attempt ${retries}/${maxRetries}):`, error);
+                if (retries === maxRetries) {
+                    console.log('Failed to load chats, but continuing with bot operation');
+                    io.emit('ready');
+                } else {
+                    await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds before retry
+                }
+            }
+        }
     } catch (error) {
         console.error('Error in ready event:', error);
+        // Don't throw the error, just log it and continue
+        io.emit('ready');
     }
 });
 
@@ -827,33 +854,38 @@ async function initializeClient() {
             await fs.mkdir(storePath, { recursive: true });
         }
 
-        // Initialize the client
-        try {
-            console.log('Attempting to initialize client...');
-            await client.initialize();
-        } catch (initError) {
-            console.error('Initial initialization failed:', initError);
-            
-            // Only clear data if we haven't authenticated yet and no existing session
-            if (!botState.isAuthenticated && !botState.sessionExists) {
-                console.log('No valid session found, clearing browser data...');
-                try {
-                    const browserDataPath = path.join(sessionsPath, 'bot-whatsapp/Default');
-                    await fs.rm(browserDataPath, { recursive: true, force: true }).catch(() => {});
-                    console.log('Cleared browser data');
-                    
-                    // Try initialization again
-                    console.log('Retrying initialization...');
-                    await client.initialize();
-                } catch (error) {
-                    console.error('Error during data cleanup or reinitialization:', error);
-                    throw error;
-                }
-            } else {
-                // If we have an existing session, just retry initialization
-                console.log('Retrying initialization with existing session...');
-                await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds before retry
+        // Initialize the client with retry logic
+        let initAttempts = 0;
+        const maxInitAttempts = 3;
+
+        while (initAttempts < maxInitAttempts) {
+            try {
+                console.log(`Attempting to initialize client (attempt ${initAttempts + 1}/${maxInitAttempts})...`);
                 await client.initialize();
+                console.log('Client initialized successfully');
+                break;
+            } catch (initError) {
+                initAttempts++;
+                console.error(`Initialization attempt ${initAttempts} failed:`, initError);
+
+                if (initAttempts === maxInitAttempts) {
+                    throw initError;
+                }
+
+                // Only clear data if we haven't authenticated yet and no existing session
+                if (!botState.isAuthenticated && !botState.sessionExists) {
+                    console.log('No valid session found, clearing browser data...');
+                    try {
+                        const browserDataPath = path.join(sessionsPath, 'bot-whatsapp/Default');
+                        await fs.rm(browserDataPath, { recursive: true, force: true }).catch(() => {});
+                        console.log('Cleared browser data');
+                    } catch (error) {
+                        console.error('Error clearing browser data:', error);
+                    }
+                }
+
+                // Wait before retrying
+                await new Promise(resolve => setTimeout(resolve, 5000));
             }
         }
     } catch (error) {
