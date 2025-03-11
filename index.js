@@ -445,7 +445,28 @@ const client = new Client({
             '--disable-breakpad',
             '--disable-canvas-aa',
             '--disable-2d-canvas-clip-aa',
-            '--disable-gl-drawing-for-tests'
+            '--disable-gl-drawing-for-tests',
+            '--enable-automation',
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-client-side-phishing-detection',
+            '--disable-default-apps',
+            '--disable-dev-shm-usage',
+            '--disable-extensions',
+            '--disable-features=Translate',
+            '--disable-hang-monitor',
+            '--disable-ipc-flooding-protection',
+            '--disable-popup-blocking',
+            '--disable-prompt-on-repost',
+            '--disable-sync',
+            '--disable-web-security',
+            '--ignore-certificate-errors',
+            '--no-default-browser-check',
+            '--no-experiments',
+            '--no-sandbox',
+            '--no-zygote',
+            '--use-gl=swiftshader',
+            '--window-position=0,0'
         ],
         defaultViewport: {
             width: 800,
@@ -469,7 +490,7 @@ const client = new Client({
     webVersionCache: {
         type: 'none'
     },
-    restartOnAuthFail: false,
+    restartOnAuthFail: true,
     qrMaxRetries: 0,
     authTimeoutMs: 0,
     qrTimeoutMs: 0,
@@ -648,9 +669,10 @@ const lastUserMessage = new Map();
 
 client.on('message', async msg => {
     try {
-        // Wait for client to be ready
-        if (!client.info) {
-            console.log('Client info not yet available, waiting...');
+        // Wait for client to be ready and check connection
+        if (!client.info || !client.pupPage) {
+            console.log('Client not ready or disconnected, attempting to reconnect...');
+            await handleReconnect();
             return;
         }
 
@@ -696,13 +718,16 @@ client.on('message', async msg => {
             console.log('Processing command in chat:', command);
             
             try {
+                // For !izin command, send text first then sticker
                 if (command === '!izin') {
                     console.log('Processing !izin command');
-                    // Add retry logic for initial message
                     await retryOperation(async () => {
                         await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
                     });
                     console.log('Sent initial !izin response');
+                    
+                    // Add a small delay before sending sticker
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                     
                     const stickerPath = path.join(__dirname, 'public', 'assets', 'stickers', 'izin.jpeg');
                     console.log('Sticker path:', stickerPath);
@@ -717,70 +742,51 @@ client.on('message', async msg => {
                     try {
                         await sendStickerFromFile(msg, stickerPath);
                         console.log('Sticker sent successfully');
+                        
+                        // Add a delay after sending sticker to allow connection to stabilize
+                        await new Promise(resolve => setTimeout(resolve, 2000));
                     } catch (stickerError) {
                         console.error('Failed to send sticker:', stickerError);
-                        // Add retry logic for error message
                         await retryOperation(async () => {
                             await msg.reply('Maaf, terjadi kesalahan saat mengirim sticker. Pesan izin tetap tercatat.');
                         });
                     }
+                    return;
                 }
-                else if (command === '!software') {
-                    await retryOperation(() => msg.reply('https://s.id/softwarepraktikum'));
-                }
-                else if (command === '!template') {
-                    await retryOperation(() => msg.reply('https://s.id/templatebdX'));
-                }
-                else if (command === '!asistensi') {
-                    await retryOperation(() => msg.reply('Untuk melihat jadwal asistensi gunakan command !asistensi1 sampai !asistensi7 sesuai dengan pertemuan yang ingin dilihat'));
-                }
-                else if (command === '!tugasakhir') {
-                    await retryOperation(() => msg.reply(dynamicCommands.tugasakhir));
-                }
-                else if (command.startsWith('!asistensi') && /^!asistensi[1-7]$/.test(command)) {
-                    await retryOperation(() => msg.reply(dynamicCommands[command.substring(1)]));
-                }
-                else if (command === '!jadwal' || command === 'kapan praktikum?') {
-                    await retryOperation(() => msg.reply(dynamicCommands.jadwal));
-                }
-                else if (command === '!nilai' || command === 'nilai praktikum?') {
-                    await retryOperation(() => msg.reply(dynamicCommands.nilai));
-                }
-                else if (command === '!sesi' || command === 'sesi praktikum?') {
-                    await retryOperation(() => msg.reply('Praktikum sesi satu : 15:15 - 16:05\nPraktikum sesi dua : 16:10 - 17:00\nPraktikum sesi tiga : 20:00 - 20:50'));
-                }
-                else if (command === '!laporan' || command === 'bagaimana cara upload laporan?') {
-                    await retryOperation(() => msg.reply('Untuk mengupload laporan:\n1. ubah file word laporan menjadi pdf\n2. cek link upload laporan sesuai dengan pertemuan ke berapa command contoh !laporan1\n3. klik link upload laporan\n4. upload laporan\n5. Tunggu sampai kelar\nJANGAN SAMPAI MENGUMPULKAN LAPORAN TERLAMBAT -5%!!!'));
-                }
-                else if (command === '!laporan1') {
-                    await retryOperation(() => msg.reply(dynamicCommands.laporan1));
-                }
-                else if (command === '!laporan2') {
-                    await retryOperation(() => msg.reply(dynamicCommands.laporan2));
-                }
-                else if (command === '!laporan3') {
-                    await retryOperation(() => msg.reply(dynamicCommands.laporan3));
-                }
-                else if (command === '!laporan4') {
-                    await retryOperation(() => msg.reply(dynamicCommands.laporan4));
-                }
-                else if (command === '!laporan5') {
-                    await retryOperation(() => msg.reply(dynamicCommands.laporan5));
-                }
-                else if (command === '!laporan6') {
-                    await retryOperation(() => msg.reply(dynamicCommands.laporan6));
-                }
-                else if (command === '!laporan7') {
-                    await retryOperation(() => msg.reply(dynamicCommands.laporan7));
-                }
-                else if (command === '!who made you' || command === 'siapa yang membuat kamu?') {
-                    await retryOperation(() => msg.reply('I have been made by @unlovdman atas izin allah\nSaya dibuat oleh @unlovdman atas izin allah'));
-                }
-                else if (command === '!contact' || command === 'gimana saya mengontak anda?') {
-                    await retryOperation(() => msg.reply('you can visit my portofolio web app https://unlovdman.vercel.app/ for more information'));
-                }
-                else if (command === '!help' || command === '!bantuan') {
-                    await retryOperation(() => msg.reply(`Daftar perintah yang tersedia:
+
+                // Handle other commands with retry logic
+                switch (command) {
+                    case '!software':
+                        await retryOperation(() => msg.reply('https://s.id/softwarepraktikum'));
+                        break;
+                    case '!template':
+                        await retryOperation(() => msg.reply('https://s.id/templatebdX'));
+                        break;
+                    case '!asistensi':
+                        await retryOperation(() => msg.reply('Untuk melihat jadwal asistensi gunakan command !asistensi1 sampai !asistensi7 sesuai dengan pertemuan yang ingin dilihat'));
+                        break;
+                    case '!tugasakhir':
+                        await retryOperation(() => msg.reply(dynamicCommands.tugasakhir));
+                        break;
+                    case '!jadwal':
+                    case 'kapan praktikum?':
+                        await retryOperation(() => msg.reply(dynamicCommands.jadwal));
+                        break;
+                    case '!nilai':
+                    case 'nilai praktikum?':
+                        await retryOperation(() => msg.reply(dynamicCommands.nilai));
+                        break;
+                    case '!sesi':
+                    case 'sesi praktikum?':
+                        await retryOperation(() => msg.reply('Praktikum sesi satu : 15:15 - 16:05\nPraktikum sesi dua : 16:10 - 17:00\nPraktikum sesi tiga : 20:00 - 20:50'));
+                        break;
+                    case '!laporan':
+                    case 'bagaimana cara upload laporan?':
+                        await retryOperation(() => msg.reply('Untuk mengupload laporan:\n1. ubah file word laporan menjadi pdf\n2. cek link upload laporan sesuai dengan pertemuan ke berapa command contoh !laporan1\n3. klik link upload laporan\n4. upload laporan\n5. Tunggu sampai kelar\nJANGAN SAMPAI MENGUMPULKAN LAPORAN TERLAMBAT -5%!!!'));
+                        break;
+                    case '!help':
+                    case '!bantuan':
+                        await retryOperation(() => msg.reply(`Daftar perintah yang tersedia:
 !jadwal - Informasi jadwal praktikum
 !laporan - Cara upload laporan
 !sesi - Informasi sesi praktikum
@@ -789,8 +795,15 @@ client.on('message', async msg => {
 !asistensi - Informasi jadwal asistensi
 !software - Link download software praktikum
 !template - Link template laporan
-!tugasakhir - Informasi tugas akhir
-`));
+!tugasakhir - Informasi tugas akhir`));
+                        break;
+                    default:
+                        if (command.startsWith('!asistensi') && /^!asistensi[1-7]$/.test(command)) {
+                            await retryOperation(() => msg.reply(dynamicCommands[command.substring(1)]));
+                        } else if (command.startsWith('!laporan') && /^!laporan[1-7]$/.test(command)) {
+                            await retryOperation(() => msg.reply(dynamicCommands[command]));
+                        }
+                        break;
                 }
             } catch (cmdError) {
                 console.error('Error executing command:', cmdError);
@@ -798,11 +811,15 @@ client.on('message', async msg => {
                     await retryOperation(() => msg.reply('Maaf, terjadi kesalahan dalam memproses perintah. Silakan coba lagi.'));
                 } catch (replyError) {
                     console.error('Failed to send error message:', replyError);
+                    // If we can't send the error message, try to reconnect
+                    await handleReconnect();
                 }
             }
         }
     } catch (error) {
         console.error('Critical error in message handler:', error);
+        // Try to reconnect on critical errors
+        await handleReconnect();
     }
 });
 
