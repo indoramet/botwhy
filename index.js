@@ -412,11 +412,7 @@ const client = new Client({
             '--disable-infobars',
             '--disable-notifications',
             '--use-gl=disabled',
-            '--disable-setuid-sandbox',
-            '--no-zygote',
             '--deterministic-fetch',
-            '--disable-features=IsolateOrigins',
-            '--disable-features=site-per-process',
             '--disable-blink-features=AutomationControlled',
             '--disable-sync',
             '--disable-background-networking',
@@ -439,8 +435,6 @@ const client = new Client({
             '--disable-dev-profile',
             '--disable-software-rasterizer',
             '--disable-extensions-http-throttling',
-            '--disable-backgrounding-occluded-windows',
-            '--disable-renderer-backgrounding',
             '--disable-popup-blocking',
             '--disable-hang-monitor',
             '--disable-client-side-phishing-detection',
@@ -462,7 +456,8 @@ const client = new Client({
             '--no-default-browser-check',
             '--no-experiments',
             '--no-pings',
-            '--password-store=basic'
+            '--password-store=basic',
+            '--user-data-dir=/tmp/puppeteer_dev_profile'
         ],
         defaultViewport: {
             width: 1280,
@@ -480,7 +475,8 @@ const client = new Client({
         waitForInitialPage: true,
         handleSIGINT: false,
         handleSIGTERM: false,
-        handleSIGHUP: false
+        handleSIGHUP: false,
+        userDataDir: '/tmp/puppeteer_dev_profile'
     },
     webVersion: '2.2408.52',
     webVersionCache: {
@@ -1045,11 +1041,33 @@ async function initializeClient() {
         botState.isAuthenticated = false;
         isClientHealthy = false;
         
-        // Ensure directories exist
+        // Clean up any existing browser processes
+        try {
+            await client.destroy().catch(() => {});
+        } catch (error) {
+            console.log('No existing client to destroy');
+        }
+        
+        // Clean up session directories
         const sessionsPath = '/app/sessions';
-        const storePath = '/app/sessions/.store';
-        await fs.mkdir(sessionsPath, { recursive: true });
-        await fs.mkdir(storePath, { recursive: true });
+        const tempProfilePath = '/tmp/puppeteer_dev_profile';
+        
+        try {
+            // Remove temporary profile directory
+            await fs.rm(tempProfilePath, { recursive: true, force: true }).catch(() => {});
+            // Remove SingletonLock file if it exists
+            await fs.rm(path.join(sessionsPath, 'session-bot-whatsapp/SingletonLock'), { force: true }).catch(() => {});
+            
+            // Ensure directories exist
+            await fs.mkdir(sessionsPath, { recursive: true });
+            await fs.mkdir(path.join(sessionsPath, '.store'), { recursive: true });
+            await fs.mkdir(tempProfilePath, { recursive: true });
+            
+            // Set proper permissions
+            await fs.chmod(tempProfilePath, 0o777).catch(() => {});
+        } catch (error) {
+            console.error('Error during directory cleanup:', error);
+        }
         
         // Initialize with retry logic
         let initAttempts = 0;
@@ -1058,11 +1076,6 @@ async function initializeClient() {
         while (initAttempts < maxInitAttempts) {
             try {
                 console.log(`Attempting to initialize client (attempt ${initAttempts + 1}/${maxInitAttempts})...`);
-                
-                // Destroy existing client if any
-                if (client.pupPage) {
-                    await client.destroy().catch(console.error);
-                }
                 
                 // Wait before initialization
                 await new Promise(resolve => setTimeout(resolve, 2000));
@@ -1098,13 +1111,13 @@ async function initializeClient() {
                     throw error;
                 }
                 
-                // Clear session data on failure
+                // Clean up between attempts
                 try {
-                    const browserDataPath = path.join(sessionsPath, 'bot-whatsapp');
-                    await fs.rm(browserDataPath, { recursive: true, force: true }).catch(() => {});
-                    console.log('Cleared browser data');
+                    await fs.rm(tempProfilePath, { recursive: true, force: true }).catch(() => {});
+                    await fs.mkdir(tempProfilePath, { recursive: true });
+                    await fs.chmod(tempProfilePath, 0o777).catch(() => {});
                 } catch (cleanupError) {
-                    console.error('Error clearing browser data:', cleanupError);
+                    console.error('Error during cleanup:', cleanupError);
                 }
                 
                 // Wait before retry
