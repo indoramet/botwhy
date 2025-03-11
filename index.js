@@ -436,9 +436,6 @@ const client = new Client({
             '--disable-renderer-backgrounding',
             '--disable-ipc-flooding-protection',
             '--enable-features=NetworkService,NetworkServiceInProcess',
-            '--disable-dev-shm-usage',
-            '--disable-setuid-sandbox',
-            '--no-sandbox',
             '--ignore-certificate-errors',
             '--disable-infobars',
             '--disable-notifications',
@@ -460,8 +457,7 @@ const client = new Client({
         waitForInitialPage: true,
         handleSIGINT: false,
         handleSIGTERM: false,
-        handleSIGHUP: false,
-        userDataDir: '/app/sessions/bot-whatsapp'
+        handleSIGHUP: false
     },
     webVersion: '2.2408.52',
     webVersionCache: {
@@ -836,16 +832,6 @@ async function initializeClient() {
             await fs.mkdir(sessionsPath, { recursive: true });
         }
 
-        // Ensure store directory exists
-        const storePath = '/app/sessions/.store';
-        try {
-            await fs.access(storePath);
-            console.log('Store directory exists');
-        } catch (error) {
-            console.log('Creating store directory...');
-            await fs.mkdir(storePath, { recursive: true });
-        }
-
         // Initialize the client with retry logic
         let initAttempts = 0;
         const maxInitAttempts = 3;
@@ -862,18 +848,6 @@ async function initializeClient() {
 
                 if (initAttempts === maxInitAttempts) {
                     throw initError;
-                }
-
-                // Only clear data if we haven't authenticated yet and no existing session
-                if (!botState.isAuthenticated && !botState.sessionExists) {
-                    console.log('No valid session found, clearing browser data...');
-                    try {
-                        const browserDataPath = path.join(sessionsPath, 'bot-whatsapp/Default');
-                        await fs.rm(browserDataPath, { recursive: true, force: true }).catch(() => {});
-                        console.log('Cleared browser data');
-                    } catch (error) {
-                        console.error('Error clearing browser data:', error);
-                    }
                 }
 
                 // Wait before retrying
