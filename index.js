@@ -235,7 +235,21 @@ const io = new Server(server);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-    res.status(200).send('OK');
+    const status = {
+        server: 'OK',
+        whatsapp: {
+            ready: botState.isReady,
+            authenticated: botState.isAuthenticated,
+            lastPing: botState.lastPing ? new Date(botState.lastPing).toISOString() : null
+        },
+        uptime: process.uptime()
+    };
+
+    if (!botState.isReady || !botState.isAuthenticated) {
+        return res.status(503).json(status);
+    }
+
+    res.status(200).json(status);
 });
 
 // Serve static files
@@ -512,14 +526,22 @@ const lastUserMessage = new Map();
 
 client.on('message', async msg => {
     try {
+        // Add debug logging
+        console.log('Message received:', {
+            from: msg.from,
+            body: msg.body,
+            timestamp: new Date().toISOString()
+        });
+
         // Wait for client to be ready
-        if (!client.info) {
-            console.log('Client info not yet available, waiting...');
+        if (!botState.isReady) {
+            console.log('Client not ready, waiting...');
             return;
         }
 
         // Get chat before anything else
         const chat = await msg.getChat();
+        console.log('Chat retrieved:', chat.name || chat.id);
         
         // Check if chat is muted
         if (chat.isMuted) {
@@ -556,70 +578,56 @@ client.on('message', async msg => {
         console.log('Processing command:', command);
 
         // Process commands for both private and group chats if they start with !
-        if (command.startsWith('!')) {
+        if (command.startsWith('!') || command === 'kapan praktikum?' || command === 'nilai praktikum?' || 
+            command === 'sesi praktikum?' || command === 'bagaimana cara upload laporan?' ||
+            command === 'siapa yang membuat kamu?' || command === 'gimana saya mengontak anda?') {
+            
             console.log('Processing command in chat:', command);
             
             try {
+                let response = null;
+
                 if (command === '!izin') {
-                    console.log('Processing !izin command');
-                    await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
+                    response = 'Silahkan izin jika berkendala hadir, dimohon segera hubungi saya';
                 }
                 else if (command === '!software') {
-                    await msg.reply('https://s.id/softwarepraktikum');
+                    response = 'https://s.id/softwarepraktikum';
                 }
                 else if (command === '!template') {
-                    await msg.reply('https://s.id/templatebdX');
+                    response = 'https://s.id/templatebdX';
                 }
                 else if (command === '!asistensi') {
-                    await msg.reply('Untuk melihat jadwal asistensi gunakan command !asistensi1 sampai !asistensi7 sesuai dengan pertemuan yang ingin dilihat');
+                    response = 'Untuk melihat jadwal asistensi gunakan command !asistensi1 sampai !asistensi7 sesuai dengan pertemuan yang ingin dilihat';
                 }
                 else if (command === '!tugasakhir') {
-                    await msg.reply(dynamicCommands.tugasakhir);
+                    response = dynamicCommands.tugasakhir;
                 }
                 else if (command.startsWith('!asistensi') && /^!asistensi[1-7]$/.test(command)) {
-                    await msg.reply(dynamicCommands[command.substring(1)]);
+                    response = dynamicCommands[command.substring(1)];
                 }
                 else if (command === '!jadwal' || command === 'kapan praktikum?') {
-                    await msg.reply(dynamicCommands.jadwal);
+                    response = dynamicCommands.jadwal;
                 }
                 else if (command === '!nilai' || command === 'nilai praktikum?') {
-                    await msg.reply(dynamicCommands.nilai);
+                    response = dynamicCommands.nilai;
                 }
                 else if (command === '!sesi' || command === 'sesi praktikum?') {
-                    await msg.reply('Praktikum sesi satu : 15:15 - 16:05\nPraktikum sesi dua : 16:10 - 17:00\nPraktikum sesi tiga : 20:00 - 20:50');
+                    response = 'Praktikum sesi satu : 15:15 - 16:05\nPraktikum sesi dua : 16:10 - 17:00\nPraktikum sesi tiga : 20:00 - 20:50';
                 }
                 else if (command === '!laporan' || command === 'bagaimana cara upload laporan?') {
-                    await msg.reply('Untuk mengupload laporan:\n1. ubah file word laporan menjadi pdf\n2. cek link upload laporan sesuai dengan pertemuan ke berapa command contoh !laporan1\n3. klik link upload laporan\n4. upload laporan\n5. Tunggu sampai kelar\nJANGAN SAMPAI MENGUMPULKAN LAPORAN TERLAMBAT -5%!!!');
+                    response = 'Untuk mengupload laporan:\n1. ubah file word laporan menjadi pdf\n2. cek link upload laporan sesuai dengan pertemuan ke berapa command contoh !laporan1\n3. klik link upload laporan\n4. upload laporan\n5. Tunggu sampai kelar\nJANGAN SAMPAI MENGUMPULKAN LAPORAN TERLAMBAT -5%!!!';
                 }
-                else if (command === '!laporan1') {
-                    await msg.reply(dynamicCommands.laporan1);
-                }
-                else if (command === '!laporan2') {
-                    await msg.reply(dynamicCommands.laporan2);
-                }
-                else if (command === '!laporan3') {
-                    await msg.reply(dynamicCommands.laporan3);
-                }
-                else if (command === '!laporan4') {
-                    await msg.reply(dynamicCommands.laporan4);
-                }
-                else if (command === '!laporan5') {
-                    await msg.reply(dynamicCommands.laporan5);
-                }
-                else if (command === '!laporan6') {
-                    await msg.reply(dynamicCommands.laporan6);
-                }
-                else if (command === '!laporan7') {
-                    await msg.reply(dynamicCommands.laporan7);
+                else if (command.startsWith('!laporan') && /^!laporan[1-7]$/.test(command)) {
+                    response = dynamicCommands[command.substring(1)];
                 }
                 else if (command === '!who made you' || command === 'siapa yang membuat kamu?') {
-                    await msg.reply('I have been made by @unlovdman atas izin allah\nSaya dibuat oleh @unlovdman atas izin allah');
+                    response = 'I have been made by @unlovdman atas izin allah\nSaya dibuat oleh @unlovdman atas izin allah';
                 }
                 else if (command === '!contact' || command === 'gimana saya mengontak anda?') {
-                    await msg.reply('you can visit my portofolio web app https://unlovdman.vercel.app/ for more information');
+                    response = 'you can visit my portofolio web app https://unlovdman.vercel.app/ for more information';
                 }
                 else if (command === '!help' || command === '!bantuan') {
-                    await msg.reply(`Daftar perintah yang tersedia:
+                    response = `Daftar perintah yang tersedia:
 !jadwal - Informasi jadwal praktikum
 !laporan - Cara upload laporan
 !sesi - Informasi sesi praktikum
@@ -628,8 +636,13 @@ client.on('message', async msg => {
 !asistensi - Informasi jadwal asistensi
 !software - Link download software praktikum
 !template - Link template laporan
-!tugasakhir - Informasi tugas akhir
-`);
+!tugasakhir - Informasi tugas akhir`;
+                }
+
+                if (response) {
+                    console.log('Sending response for command:', command);
+                    await msg.reply(response);
+                    console.log('Response sent successfully');
                 }
             } catch (cmdError) {
                 console.error('Error executing command:', cmdError);
@@ -638,6 +651,11 @@ client.on('message', async msg => {
         }
     } catch (error) {
         console.error('Critical error in message handler:', error);
+        try {
+            await msg.reply('Maaf, terjadi kesalahan sistem. Silakan coba beberapa saat lagi.');
+        } catch (replyError) {
+            console.error('Error sending error message:', replyError);
+        }
     }
 });
 
