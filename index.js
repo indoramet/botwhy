@@ -665,45 +665,68 @@ const lastUserMessage = new Map();
 
 client.on('message', async msg => {
     try {
-        // Wait for client to be ready
+        console.log('\n=== New Message Received ===');
+        console.log('From:', msg.from);
+        console.log('Body:', msg.body);
+        console.log('Type:', msg.type);
+        console.log('Timestamp:', new Date().toISOString());
+
+        // Check client state
         if (!client.info) {
-            console.log('Client info not yet available, waiting...');
-            await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
-            if (!client.info) {
-                console.log('Client still not ready, attempting reconnection...');
+            console.log('❌ Client info not available');
+            console.log('Current bot state:', {
+                isReady: botState.isReady,
+                isAuthenticated: botState.isAuthenticated,
+                reconnectAttempts: botState.reconnectAttempts
+            });
+            
+            // Try to recover client state
+            try {
+                await client.getState();
+                console.log('Client state recovered');
+            } catch (stateError) {
+                console.error('Failed to recover client state:', stateError);
                 await handleReconnect();
                 return;
             }
         }
 
-        // Get chat before anything else
+        // Get chat with logging
         let chat;
         try {
+            console.log('Attempting to get chat...');
             chat = await msg.getChat();
+            console.log('Chat retrieved successfully:', {
+                name: chat.name,
+                isGroup: chat.isGroup,
+                id: chat.id._serialized
+            });
         } catch (error) {
-            console.error('Error getting chat:', error);
+            console.error('❌ Error getting chat:', error);
             await handleReconnect();
             return;
         }
         
         // Check if chat is muted
         if (chat.isMuted) {
-            console.log('Chat is muted, skipping response:', msg.from);
+            console.log('Chat is muted, skipping:', msg.from);
             return;
         }
 
-        // Rate limiting check with increased threshold for stability
+        // Rate limiting check
         const now = Date.now();
         const lastTime = lastUserMessage.get(msg.from) || 0;
         
         if (now - lastTime < 2000) {
-            console.log('Rate limiting response to:', msg.from);
+            console.log('Rate limiting applied for:', msg.from);
             return;
         }
 
         lastUserMessage.set(msg.from, now);
 
+        // Emit to socket if active
         if (activeSocket) {
+            console.log('Emitting message to web client');
             activeSocket.emit('message', {
                 from: msg.from,
                 body: msg.body,
@@ -711,14 +734,18 @@ client.on('message', async msg => {
             });
         }
 
-        // Check for admin commands first with error handling
+        // Process admin commands with detailed logging
         try {
+            console.log('Checking for admin command...');
+            if (ADMIN_NUMBERS.includes(msg.from)) {
+                console.log('Message is from admin');
+            }
             if (await handleAdminCommand(msg)) {
-                console.log('Admin command handled successfully');
+                console.log('✅ Admin command processed successfully');
                 return;
             }
         } catch (adminError) {
-            console.error('Error handling admin command:', adminError);
+            console.error('❌ Error handling admin command:', adminError);
             await msg.reply('Error processing admin command. Please try again.');
             return;
         }
@@ -726,18 +753,22 @@ client.on('message', async msg => {
         const command = msg.body.toLowerCase();
         console.log('Processing command:', command);
 
-        // Process commands with better error handling
+        // Process regular commands
         if (command.startsWith('!')) {
-            console.log('Processing command in chat:', command);
+            console.log(`Processing command: ${command}`);
             
             try {
-                // Add delay between commands to prevent overload
+                // Add small delay between commands
                 await new Promise(resolve => setTimeout(resolve, 500));
+
+                // Log command execution
+                console.log('Executing command...');
                 
+                // Command handling with logging
                 if (command === '!izin') {
-                    console.log('Processing !izin command');
+                    console.log('Executing !izin command');
                     await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
-                    console.log('Sent initial !izin response');
+                    console.log('Initial !izin response sent');
                     
                     const stickerPath = path.join(__dirname, 'public', 'assets', 'stickers', 'izin.jpeg');
                     console.log('Sticker path:', stickerPath);
@@ -751,14 +782,16 @@ client.on('message', async msg => {
                     
                     try {
                         await sendStickerFromFile(msg, stickerPath);
-                        console.log('Sticker sent successfully');
+                        console.log('✅ Sticker sent successfully');
                     } catch (stickerError) {
-                        console.error('Failed to send sticker:', stickerError);
+                        console.error('❌ Failed to send sticker:', stickerError);
                         await msg.reply('Maaf, terjadi kesalahan saat mengirim sticker. Pesan izin tetap tercatat.');
                     }
                 }
                 else if (command === '!software') {
+                    console.log('Executing !software command');
                     await msg.reply('https://s.id/softwarepraktikum');
+                    console.log('✅ Software link sent');
                 }
                 else if (command === '!template') {
                     await msg.reply('https://s.id/templatebdX');
@@ -812,6 +845,7 @@ client.on('message', async msg => {
                     await msg.reply('you can visit my portofolio web app https://unlovdman.vercel.app/ for more information');
                 }
                 else if (command === '!help' || command === '!bantuan') {
+                    console.log('Executing help command');
                     await msg.reply(`Daftar perintah yang tersedia:
 !jadwal - Informasi jadwal praktikum
 !laporan - Cara upload laporan
@@ -823,23 +857,41 @@ client.on('message', async msg => {
 !template - Link template laporan
 !tugasakhir - Informasi tugas akhir
 `);
+                    console.log('✅ Help message sent');
                 }
+                
+                console.log('✅ Command executed successfully:', command);
             } catch (cmdError) {
-                console.error('Error executing command:', cmdError);
+                console.error('❌ Error executing command:', cmdError);
                 await msg.reply('Maaf, terjadi kesalahan dalam memproses perintah. Silakan coba lagi.');
             }
         }
     } catch (error) {
-        console.error('Critical error in message handler:', error);
+        console.error('❌ Critical error in message handler:', error);
+        try {
+            await msg.reply('Terjadi kesalahan sistem. Mohon coba beberapa saat lagi.');
+        } catch (replyError) {
+            console.error('Failed to send error message:', replyError);
+        }
+    } finally {
+        console.log('=== Message Processing Complete ===\n');
     }
 });
 
+// Add more state change logging
 client.on('change_state', state => {
-    console.log('Client state changed to:', state);
+    console.log('\n=== Client State Change ===');
+    console.log('New state:', state);
+    console.log('Bot state:', botState);
+    console.log('=========================\n');
 });
 
+// Enhanced loading screen logging
 client.on('loading_screen', (percent, message) => {
-    console.log('Loading screen:', percent, message);
+    console.log('\n=== Loading Screen Update ===');
+    console.log('Progress:', percent + '%');
+    console.log('Message:', message);
+    console.log('==========================\n');
 });
 
 // Handle unexpected errors
