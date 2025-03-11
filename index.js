@@ -332,7 +332,28 @@ const client = new Client({
             '--ignore-certificate-errors-spki-list',
             '--window-size=1280,720',
             '--single-process',
-            '--no-zygote'
+            '--no-zygote',
+            '--disable-features=site-per-process',
+            '--disable-features=TranslateUI',
+            '--disable-breakpad',
+            '--disable-component-update',
+            '--disable-domain-reliability',
+            '--disable-features=AudioServiceOutOfProcess',
+            '--disable-features=IsolateOrigins',
+            '--disable-features=site-per-process',
+            '--disable-hang-monitor',
+            '--disable-ipc-flooding-protection',
+            '--disable-notifications',
+            '--disable-offer-store-unmasked-wallet-cards',
+            '--disable-popup-blocking',
+            '--disable-print-preview',
+            '--disable-prompt-on-repost',
+            '--disable-renderer-backgrounding',
+            '--disable-speech-api',
+            '--disable-sync',
+            '--disable-webgl',
+            '--disable-webgl2',
+            '--user-data-dir=/tmp/puppeteer_chrome'
         ],
         defaultViewport: {
             width: 1280,
@@ -341,7 +362,8 @@ const client = new Client({
         executablePath: process.env.CHROME_BIN || '/usr/bin/chromium',
         ignoreHTTPSErrors: true,
         timeout: 60000,
-        protocolTimeout: 60000
+        protocolTimeout: 60000,
+        userDataDir: '/tmp/puppeteer_chrome'
     },
     webVersion: '2.2204.13',
     restartOnAuthFail: false,
@@ -1046,6 +1068,24 @@ async function initializeClient() {
     try {
         console.log('Starting WhatsApp client initialization...');
         
+        // Clean up any existing SingletonLock files
+        const cleanupPaths = [
+            './sessions/session-bot-whatsapp/SingletonLock',
+            './sessions/bot-whatsapp/SingletonLock',
+            '/tmp/puppeteer_chrome/SingletonLock'
+        ];
+
+        for (const lockPath of cleanupPaths) {
+            try {
+                await fs.unlink(lockPath);
+                console.log(`Removed lock file: ${lockPath}`);
+            } catch (error) {
+                if (error.code !== 'ENOENT') {
+                    console.warn(`Warning: Could not remove lock file ${lockPath}:`, error.message);
+                }
+            }
+        }
+
         // Ensure sessions directory exists
         const sessionsPath = './sessions';
         try {
@@ -1056,14 +1096,14 @@ async function initializeClient() {
             await fs.mkdir(sessionsPath, { recursive: true });
         }
 
-        // Ensure store directory exists
-        const storePath = './sessions/.store';
+        // Ensure temporary chrome directory exists and is empty
+        const chromePath = '/tmp/puppeteer_chrome';
         try {
-            await fs.access(storePath);
-            console.log('Store directory exists');
+            await fs.rm(chromePath, { recursive: true, force: true });
+            await fs.mkdir(chromePath, { recursive: true });
+            console.log('Chrome temporary directory cleaned');
         } catch (error) {
-            console.log('Creating store directory...');
-            await fs.mkdir(storePath, { recursive: true });
+            console.warn('Warning: Could not clean Chrome directory:', error.message);
         }
 
         // Initialize the client with retry logic
@@ -1084,16 +1124,13 @@ async function initializeClient() {
                     throw initError;
                 }
 
-                // Only clear data if we haven't authenticated yet and no existing session
-                if (!botState.isAuthenticated && !botState.sessionExists) {
-                    console.log('No valid session found, clearing browser data...');
-                    try {
-                        const browserDataPath = path.join(sessionsPath, 'bot-whatsapp/Default');
-                        await fs.rm(browserDataPath, { recursive: true, force: true }).catch(() => {});
-                        console.log('Cleared browser data');
-                    } catch (error) {
-                        console.error('Error clearing browser data:', error);
-                    }
+                // Clean up between attempts
+                try {
+                    await fs.rm(chromePath, { recursive: true, force: true });
+                    await fs.mkdir(chromePath, { recursive: true });
+                    console.log('Chrome temporary directory cleaned for retry');
+                } catch (error) {
+                    console.warn('Warning: Could not clean Chrome directory for retry:', error.message);
                 }
 
                 // Wait before retrying
