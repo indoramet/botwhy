@@ -631,11 +631,14 @@ const lastUserMessage = new Map();
 
 client.on('message', async msg => {
     try {
+        // Get chat before anything else
+        const chat = await msg.getChat();
+        
         console.log('Received message:', {
             from: msg.from,
             body: msg.body,
-            isGroup: msg._data.isGroup,
-            mentionedIds: msg.mentionedIds
+            isGroup: chat.isGroup,
+            mentionedIds: msg._data.mentionedJidList || []
         });
 
         const now = Date.now();
@@ -659,67 +662,71 @@ client.on('message', async msg => {
         const command = msg.body.toLowerCase();
         console.log('Processing command:', command);
 
-        try {
-            const chat = await msg.getChat();
-            console.log('Chat info:', {
-                isGroup: chat.isGroup,
-                name: chat.name,
-                isMuted: chat.isMuted
-            });
+        console.log('Chat info:', {
+            isGroup: chat.isGroup,
+            name: chat.name,
+            isMuted: Boolean(chat.isMuted)
+        });
+        
+        // Check if chat is muted
+        if (chat.isMuted) {
+            console.log('Chat is muted, skipping response:', msg.from);
+            return;
+        }
+        
+        // Check for admin commands first
+        if (await handleAdminCommand(msg)) {
+            console.log('Admin command handled');
+            return;
+        }
+
+        // Get client info if not already available
+        const clientInfo = client.info || await client.getWid();
+        const botNumber = clientInfo.wid?._serialized || clientInfo._serialized;
+
+        // Process commands for both private chats and group chats
+        const shouldProcessCommand = !chat.isGroup || 
+            (chat.isGroup && (
+                msg._data.mentionedJidList?.includes(botNumber) ||
+                msg.body.toLowerCase().includes('@bot')
+            ));
+
+        if (shouldProcessCommand) {
+            console.log('Processing command in chat:', command);
             
-            // Check if chat is muted
-            if (chat.isMuted) {
-                console.log('Chat is muted, skipping response:', msg.from);
-                return;
+            // Remove bot mention and number from command in group chats
+            let cleanCommand = command;
+            if (chat.isGroup) {
+                cleanCommand = command
+                    .replace(new RegExp(`@${botNumber.split('@')[0]}`, 'g'), '')
+                    .replace(/@bot/gi, '')
+                    .trim();
             }
             
-            // Check for admin commands first
-            if (await handleAdminCommand(msg)) {
-                console.log('Admin command handled');
-                return;
-            }
+            console.log('Clean command:', cleanCommand);
 
-            // Process commands for both private chats and group chats
-            const shouldProcessCommand = !chat.isGroup || 
-                (chat.isGroup && (msg.mentionedIds?.includes(client.info.wid._serialized) || 
-                msg.body.toLowerCase().includes('@bot')));
-
-            if (shouldProcessCommand) {
-                console.log('Processing command in chat:', command);
-                
-                // Remove bot mention from command in group chats
-                const cleanCommand = chat.isGroup ? 
-                    command.replace(/@\d+/, '').replace('@bot', '').trim() : 
-                    command;
-                
+            try {
                 if (cleanCommand === '!izin') {
                     console.log('Processing !izin command');
+                    await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
+                    console.log('Sent initial !izin response');
+                    
+                    const stickerPath = path.join(__dirname, 'public', 'assets', 'stickers', 'izin.jpeg');
+                    console.log('Sticker path:', stickerPath);
+                    
                     try {
-                        await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
-                        console.log('Sent initial !izin response');
-                        
-                        const stickerPath = path.join(__dirname, 'public', 'assets', 'stickers', 'izin.jpeg');
-                        console.log('Sticker path:', stickerPath);
-                        
-                        // Check if sticker directory exists, if not create it
-                        const stickerDir = path.join(__dirname, 'public', 'assets', 'stickers');
-                        try {
-                            await fs.access(stickerDir);
-                        } catch (error) {
-                            console.log('Creating sticker directory');
-                            await fs.mkdir(stickerDir, { recursive: true });
-                        }
-                        
-                        try {
-                            await sendStickerFromFile(msg, stickerPath);
-                            console.log('Sticker sent successfully');
-                        } catch (stickerError) {
-                            console.error('Failed to send sticker:', stickerError);
-                            await msg.reply('Maaf, terjadi kesalahan saat mengirim sticker. Pesan izin tetap tercatat.');
-                        }
+                        await fs.access(path.dirname(stickerPath));
                     } catch (error) {
-                        console.error('Error handling !izin command:', error);
-                        await msg.reply('Maaf, terjadi kesalahan dalam memproses permintaan izin.');
+                        console.log('Creating sticker directory');
+                        await fs.mkdir(path.dirname(stickerPath), { recursive: true });
+                    }
+                    
+                    try {
+                        await sendStickerFromFile(msg, stickerPath);
+                        console.log('Sticker sent successfully');
+                    } catch (stickerError) {
+                        console.error('Failed to send sticker:', stickerError);
+                        await msg.reply('Maaf, terjadi kesalahan saat mengirim sticker. Pesan izin tetap tercatat.');
                     }
                 }
                 else if (cleanCommand === '!software') {
@@ -789,12 +796,13 @@ client.on('message', async msg => {
 !tugasakhir - Informasi tugas akhir
 `);
                 }
-            } else if (chat.isGroup && command.startsWith('!')) {
-                console.log('Group message without mention, sending hint');
-                await msg.reply('Untuk menggunakan bot di grup, mohon mention bot terlebih dahulu.\nContoh: @bot !help');
+            } catch (cmdError) {
+                console.error('Error executing command:', cmdError);
+                await msg.reply('Maaf, terjadi kesalahan dalam memproses perintah. Silakan coba lagi.');
             }
-        } catch (error) {
-            console.error('Error handling message:', error);
+        } else if (chat.isGroup && command.startsWith('!')) {
+            console.log('Group message without mention, sending hint');
+            await msg.reply('Untuk menggunakan bot di grup, mohon mention bot terlebih dahulu.\nContoh: @bot !help');
         }
     } catch (error) {
         console.error('Critical error in message handler:', error);
