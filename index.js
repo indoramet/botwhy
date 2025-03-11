@@ -300,8 +300,7 @@ setInterval(processMessageQueue, DELAY_BETWEEN_MESSAGES);
 const client = new Client({
     authStrategy: new LocalAuth({
         clientId: 'bot-whatsapp',
-        dataPath: './sessions',
-        backupSyncIntervalMs: 300000
+        dataPath: './sessions'
     }),
     puppeteer: {
         headless: true,
@@ -340,7 +339,7 @@ const client = new Client({
         timeout: 120000,
         protocolTimeout: 120000
     },
-    webVersion: '2.2429.7',
+    webVersion: '2.2318.11',
     restartOnAuthFail: true,
     qrMaxRetries: 5,
     authTimeoutMs: 120000,
@@ -446,93 +445,64 @@ client.on('authenticated', async () => {
     
     console.log('Authentication successful, waiting for full initialization...');
     
-    // Don't try to access any WhatsApp functions here
-    // Wait for the ready event instead
+    // Wait a moment before proceeding
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    
+    // Initialize message handling
+    console.log('Setting up message handlers...');
+    client.on('message', async msg => {
+        console.log('\n=== NEW MESSAGE RECEIVED ===');
+        console.log('Message details:', {
+            from: msg.from,
+            body: msg.body,
+            timestamp: new Date().toISOString()
+        });
+        
+        // Rest of message handling code...
+    });
+    
+    console.log('Message handlers set up successfully');
 });
 
 client.on('ready', async () => {
     console.log('Client is ready!');
     
     try {
-        // Verify WhatsApp Web connection with retries
-        const page = client.pupPage;
-        if (page) {
-            let retryCount = 0;
-            const maxRetries = 5;
-            let isFullyInitialized = false;
-
-            while (retryCount < maxRetries && !isFullyInitialized) {
-                console.log(`Checking WhatsApp Web connection (attempt ${retryCount + 1}/${maxRetries})...`);
-                
-                try {
-                    // Force reload WhatsApp Web scripts
-                    await page.evaluate(() => {
-                        window.Store = undefined;
-                        window.WebSocket = undefined;
-                        location.reload();
-                    });
-                    
-                    // Wait for network to be idle
-                    await page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 });
-                    
-                    // Wait for WhatsApp Web to initialize
-                    await new Promise(resolve => setTimeout(resolve, 5000));
-                    
-                    const connectionStatus = await page.evaluate(() => {
-                        return {
-                            store: !!window.Store,
-                            wap: !!window.Store?.Wap,
-                            stream: !!window.Store?.Stream,
-                            conn: !!window.Store?.Conn?.connected
-                        };
-                    });
-                    
-                    console.log('WhatsApp Web connection status:', connectionStatus);
-                    
-                    if (connectionStatus.store && connectionStatus.wap && connectionStatus.stream) {
-                        isFullyInitialized = true;
-                        console.log('WhatsApp Web fully initialized!');
-                        break;
-                    }
-                } catch (error) {
-                    console.error('Error during initialization attempt:', error);
-                }
-                
-                console.log('WhatsApp Web not fully initialized, waiting 10 seconds...');
-                await new Promise(resolve => setTimeout(resolve, 10000));
-                retryCount++;
-            }
-
-            if (!isFullyInitialized) {
-                console.log('Failed to fully initialize WhatsApp Web, attempting full restart...');
-                await handleReconnect();
-                return;
-            }
-        }
-        
-        // Set bot state after successful initialization
+        // Set bot state immediately
         botState.isReady = true;
         botState.isAuthenticated = true;
         botState.reconnectAttempts = 0;
         io.emit('ready');
         
+        // Verify WhatsApp Web connection
+        const page = client.pupPage;
+        if (page) {
+            console.log('Checking WhatsApp Web connection...');
+            
+            // Wait for WhatsApp Web to be fully loaded
+            await page.waitForFunction(() => {
+                return window.Store && 
+                       window.Store.Msg && 
+                       window.Store.Wap && 
+                       window.Store.Stream && 
+                       window.Store.Conn;
+            }, { timeout: 30000 });
+            
+            console.log('WhatsApp Web fully loaded');
+            
+            // Send a test message
+            try {
+                console.log('Sending test message...');
+                const chat = await client.getChatById('status@broadcast');
+                await chat.sendMessage('Bot is online and ready to receive messages.');
+                console.log('Test message sent successfully');
+            } catch (error) {
+                console.error('Error sending test message:', error);
+            }
+        }
+        
         // Start connection check
         startConnectionCheck();
-        
-        // Try to load chats
-        try {
-            const chats = await client.getChats();
-            console.log(`Loaded ${chats.length} chats successfully`);
-            
-            // Send a test message to verify everything is working
-            console.log('Testing message handling...');
-            await client.sendMessage('status@broadcast', 'Bot initialized successfully');
-            console.log('Test message sent successfully');
-            
-        } catch (chatError) {
-            console.error('Error loading initial chats:', chatError);
-            await handleReconnect();
-        }
         
     } catch (error) {
         console.error('Error in ready event:', error);
@@ -691,15 +661,15 @@ let activeSocket = null;
 const lastUserMessage = new Map();
 
 client.on('message_create', (msg) => {
-    console.log('=== RAW MESSAGE CREATE EVENT ===');
-    console.log({
+    console.log('\n=== RAW MESSAGE CREATE EVENT ===');
+    console.log(JSON.stringify({
         fromMe: msg.fromMe,
         from: msg.from,
         to: msg.to,
         body: msg.body,
         type: msg.type,
         timestamp: new Date().toISOString()
-    });
+    }, null, 2));
 });
 
 client.on('message', async msg => {
@@ -894,6 +864,7 @@ client.on('message_revoke_everyone', async (after, before) => {
 
 // Add state change logging
 client.on('change_state', state => {
+    console.log('\n=== STATE CHANGE ===');
     console.log('Client state changed to:', state);
     if (state === 'CONFLICT' || state === 'UNLAUNCHED') {
         console.log('Problematic state detected, attempting to reconnect...');
