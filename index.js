@@ -340,7 +340,6 @@ const client = new Client({
             '--disable-domain-reliability',
             '--disable-features=AudioServiceOutOfProcess',
             '--disable-features=IsolateOrigins',
-            '--disable-features=site-per-process',
             '--disable-hang-monitor',
             '--disable-ipc-flooding-protection',
             '--disable-notifications',
@@ -352,8 +351,7 @@ const client = new Client({
             '--disable-speech-api',
             '--disable-sync',
             '--disable-webgl',
-            '--disable-webgl2',
-            '--user-data-dir=/tmp/puppeteer_chrome'
+            '--disable-webgl2'
         ],
         defaultViewport: {
             width: 1280,
@@ -362,8 +360,7 @@ const client = new Client({
         executablePath: process.env.CHROME_BIN || '/usr/bin/chromium',
         ignoreHTTPSErrors: true,
         timeout: 60000,
-        protocolTimeout: 60000,
-        userDataDir: '/tmp/puppeteer_chrome'
+        protocolTimeout: 60000
     },
     webVersion: '2.2204.13',
     restartOnAuthFail: false,
@@ -1068,24 +1065,6 @@ async function initializeClient() {
     try {
         console.log('Starting WhatsApp client initialization...');
         
-        // Clean up any existing SingletonLock files
-        const cleanupPaths = [
-            './sessions/session-bot-whatsapp/SingletonLock',
-            './sessions/bot-whatsapp/SingletonLock',
-            '/tmp/puppeteer_chrome/SingletonLock'
-        ];
-
-        for (const lockPath of cleanupPaths) {
-            try {
-                await fs.unlink(lockPath);
-                console.log(`Removed lock file: ${lockPath}`);
-            } catch (error) {
-                if (error.code !== 'ENOENT') {
-                    console.warn(`Warning: Could not remove lock file ${lockPath}:`, error.message);
-                }
-            }
-        }
-
         // Ensure sessions directory exists
         const sessionsPath = './sessions';
         try {
@@ -1094,16 +1073,6 @@ async function initializeClient() {
         } catch (error) {
             console.log('Creating sessions directory...');
             await fs.mkdir(sessionsPath, { recursive: true });
-        }
-
-        // Ensure temporary chrome directory exists and is empty
-        const chromePath = '/tmp/puppeteer_chrome';
-        try {
-            await fs.rm(chromePath, { recursive: true, force: true });
-            await fs.mkdir(chromePath, { recursive: true });
-            console.log('Chrome temporary directory cleaned');
-        } catch (error) {
-            console.warn('Warning: Could not clean Chrome directory:', error.message);
         }
 
         // Initialize the client with retry logic
@@ -1122,15 +1091,6 @@ async function initializeClient() {
 
                 if (initAttempts === maxInitAttempts) {
                     throw initError;
-                }
-
-                // Clean up between attempts
-                try {
-                    await fs.rm(chromePath, { recursive: true, force: true });
-                    await fs.mkdir(chromePath, { recursive: true });
-                    console.log('Chrome temporary directory cleaned for retry');
-                } catch (error) {
-                    console.warn('Warning: Could not clean Chrome directory for retry:', error.message);
                 }
 
                 // Wait before retrying
