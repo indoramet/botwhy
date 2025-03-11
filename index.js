@@ -474,7 +474,8 @@ const client = new Client({
         waitForInitialPage: true,
         handleSIGINT: false,
         handleSIGTERM: false,
-        handleSIGHUP: false
+        handleSIGHUP: false,
+        userDataDir: '/tmp/puppeteer_dev_profile'
     },
     webVersion: '2.2408.52',
     webVersionCache: {
@@ -1144,20 +1145,30 @@ async function initializeClient() {
             console.log('No existing client to destroy');
         }
         
-        // Ensure clean session directory
-        const sessionsPath = '/app/sessions';
+        // Clean up browser profile and lock files
+        const profilePath = '/tmp/puppeteer_dev_profile';
+        const sessionPath = '/app/sessions/session-bot-whatsapp';
+        const lockFile = path.join(sessionPath, 'SingletonLock');
+        
         try {
-            // Remove existing session if authentication failed
-            if (!botState.isAuthenticated) {
-                await fs.rm(sessionsPath, { recursive: true, force: true }).catch(() => {});
-            }
+            // Remove existing profile directory
+            await fs.rm(profilePath, { recursive: true, force: true }).catch(() => {});
             
-            // Create fresh directories
-            await fs.mkdir(sessionsPath, { recursive: true });
-            await fs.mkdir(path.join(sessionsPath, '.store'), { recursive: true });
-            await fs.chmod(sessionsPath, 0o777).catch(() => {});
+            // Remove SingletonLock file if it exists
+            await fs.unlink(lockFile).catch(() => {});
+            
+            // Create fresh profile directory with proper permissions
+            await fs.mkdir(profilePath, { recursive: true });
+            await fs.chmod(profilePath, 0o777).catch(() => {});
+            
+            // Ensure sessions directory exists with proper permissions
+            await fs.mkdir('/app/sessions', { recursive: true });
+            await fs.chmod('/app/sessions', 0o777).catch(() => {});
+            
+            // Small delay to ensure file system operations complete
+            await new Promise(resolve => setTimeout(resolve, 1000));
         } catch (error) {
-            console.error('Error preparing session directory:', error);
+            console.error('Error cleaning up profile:', error);
         }
         
         // Initialize with retry logic
@@ -1167,7 +1178,14 @@ async function initializeClient() {
         while (initAttempts < maxInitAttempts) {
             try {
                 console.log(`\nInitialization attempt ${initAttempts + 1}/${maxInitAttempts}`);
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                // Additional delay between attempts
+                if (initAttempts > 0) {
+                    await new Promise(resolve => setTimeout(resolve, 5000));
+                }
+                
+                // Clean up SingletonLock before each attempt
+                await fs.unlink(lockFile).catch(() => {});
                 
                 await client.initialize();
                 
@@ -1194,11 +1212,13 @@ async function initializeClient() {
                 initAttempts++;
                 console.error(`Initialization attempt ${initAttempts} failed:`, error);
                 
+                // Clean up after failed attempt
+                await client.destroy().catch(() => {});
+                await fs.unlink(lockFile).catch(() => {});
+                
                 if (initAttempts === maxInitAttempts) {
                     throw error;
                 }
-                
-                await new Promise(resolve => setTimeout(resolve, 5000));
             }
         }
     } catch (error) {
