@@ -342,25 +342,33 @@ const client = new Client({
             '--no-default-browser-check',
             '--no-experiments',
             '--mute-audio',
+            '--disable-sync',
+            '--disable-remote-fonts',
+            '--disable-javascript-harmony-shipping',
+            '--disable-hang-monitor',
+            '--force-color-profile=srgb',
             '--window-size=1280,720'
         ],
         defaultViewport: {
             width: 1280,
-            height: 720
+            height: 720,
+            deviceScaleFactor: 1
         },
         executablePath: process.env.CHROME_BIN || '/usr/bin/chromium',
         ignoreHTTPSErrors: true,
-        timeout: 120000,
-        protocolTimeout: 120000
+        timeout: 180000,
+        protocolTimeout: 180000,
+        waitForInitialPage: true
     },
     webVersion: '2.2204.13',
     restartOnAuthFail: false,
     qrMaxRetries: 3,
-    authTimeoutMs: 120000,
-    qrTimeoutMs: 120000,
+    authTimeoutMs: 180000,
+    qrTimeoutMs: 180000,
     takeoverOnConflict: false,
-    takeoverTimeoutMs: 120000,
-    bypassCSP: true
+    takeoverTimeoutMs: 180000,
+    bypassCSP: true,
+    linkPreviewImageThumbnailWidth: 192
 });
 
 // Track bot state
@@ -1081,7 +1089,14 @@ async function initializeClient() {
                 // Ensure clean environment before each attempt
                 global.gc && global.gc();
                 
-                await client.initialize();
+                // Initialize with timeout wrapper
+                await Promise.race([
+                    client.initialize(),
+                    new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Manual timeout after 3 minutes')), 180000)
+                    )
+                ]);
+                
                 console.log('Client initialized successfully');
                 break;
             } catch (initError) {
@@ -1094,15 +1109,17 @@ async function initializeClient() {
 
                 // Clean up between attempts
                 try {
+                    await client.destroy().catch(() => {});
                     await fs.rm(sessionsPath, { recursive: true, force: true });
                     await fs.mkdir(sessionsPath, { recursive: true });
                     console.log('Reset sessions for retry');
+                    
+                    // Wait longer between retries
+                    console.log('Waiting 30 seconds before next attempt...');
+                    await new Promise(resolve => setTimeout(resolve, 30000));
                 } catch (error) {
                     console.warn('Warning during retry cleanup:', error.message);
                 }
-
-                // Wait before retrying
-                await new Promise(resolve => setTimeout(resolve, 10000));
             }
         }
     } catch (error) {
