@@ -439,7 +439,28 @@ const client = new Client({
             '--ignore-certificate-errors',
             '--disable-infobars',
             '--disable-notifications',
-            '--force-color-profile=srgb'
+            '--force-color-profile=srgb',
+            '--disable-features=TranslateUI',
+            '--disable-features=GlobalMediaControls',
+            '--disable-client-side-phishing-detection',
+            '--disable-component-extensions-with-background-pages',
+            '--disable-default-apps',
+            '--disable-domain-reliability',
+            '--disable-features=Translate',
+            '--disable-hang-monitor',
+            '--disable-popup-blocking',
+            '--disable-prompt-on-repost',
+            '--disable-sync',
+            '--disable-web-security',
+            '--disable-zero-browsers-open-for-tests',
+            '--ignore-certificate-errors',
+            '--ignore-ssl-errors',
+            '--no-default-browser-check',
+            '--no-experiments',
+            '--no-pings',
+            '--no-proxy-server',
+            '--no-service-autorun',
+            '--password-store=basic'
         ],
         defaultViewport: {
             width: 800,
@@ -452,8 +473,8 @@ const client = new Client({
         executablePath: '/usr/bin/chromium',
         browserWSEndpoint: null,
         ignoreHTTPSErrors: true,
-        timeout: 0,
-        protocolTimeout: 0,
+        timeout: 120000,
+        protocolTimeout: 120000,
         waitForInitialPage: true,
         handleSIGINT: false,
         handleSIGTERM: false,
@@ -469,7 +490,8 @@ const client = new Client({
     qrTimeoutMs: 0,
     takeoverOnConflict: true,
     takeoverTimeoutMs: 0,
-    bypassCSP: true
+    bypassCSP: true,
+    linkPreviewApiServers: ['https://preview.whatsapp.com/api/v1/preview']
 });
 
 // Track bot state
@@ -640,9 +662,20 @@ const lastUserMessage = new Map();
 
 client.on('message', async msg => {
     try {
-        // Check client state
-        if (!client.info || !client.pupPage) {
-            console.log('Client not ready, attempting to reconnect...');
+        // Check client state with more detailed logging
+        if (!client.pupPage || !client.info) {
+            console.log('Client state check failed:');
+            console.log('pupPage exists:', !!client.pupPage);
+            console.log('info exists:', !!client.info);
+            await handleReconnect();
+            return;
+        }
+
+        // Verify page is still connected
+        try {
+            await client.pupPage.evaluate(() => true);
+        } catch (pageError) {
+            console.log('Page evaluation failed, reconnecting...');
             await handleReconnect();
             return;
         }
@@ -655,11 +688,11 @@ client.on('message', async msg => {
             return;
         }
 
-        // Rate limiting check
+        // Rate limiting check with longer window
         const now = Date.now();
         const lastTime = lastUserMessage.get(msg.from) || 0;
         
-        if (now - lastTime < 2000) {
+        if (now - lastTime < 3000) { // Increased to 3 seconds
             console.log('Rate limiting response to:', msg.from);
             return;
         }
@@ -692,31 +725,42 @@ client.on('message', async msg => {
                 if (command === '!izin') {
                     console.log('Processing !izin command');
                     try {
-                        // Send text response first
+                        // Send text response first with longer timeout
                         await retryOperation(async () => {
                             await msg.reply('Silahkan izin jika berkendala hadir, dimohon segera hubungi saya');
-                        });
+                        }, 5, 3000); // 5 retries, 3 second delay
                         
-                        // Add delay before sticker
-                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        // Add longer delay before sticker
+                        await new Promise(resolve => setTimeout(resolve, 3000));
                         
                         const stickerPath = path.join(__dirname, 'public', 'assets', 'stickers', 'izin.jpeg');
+                        
+                        // Verify client is still connected before sending sticker
+                        if (!client.pupPage || !client.info) {
+                            throw new Error('Client disconnected before sending sticker');
+                        }
                         
                         try {
                             await sendStickerFromFile(msg, stickerPath);
                             console.log('Sticker sent successfully');
                             
-                            // Add delay after sending sticker
-                            await new Promise(resolve => setTimeout(resolve, 2000));
+                            // Add longer delay after sending sticker
+                            await new Promise(resolve => setTimeout(resolve, 3000));
                         } catch (stickerError) {
                             console.error('Failed to send sticker:', stickerError);
-                            await retryOperation(async () => {
-                                await msg.reply('Maaf, terjadi kesalahan saat mengirim sticker. Pesan izin tetap tercatat.');
-                            });
+                            if (stickerError.message.includes('Session closed')) {
+                                await handleReconnect();
+                            } else {
+                                await retryOperation(async () => {
+                                    await msg.reply('Maaf, terjadi kesalahan saat mengirim sticker. Pesan izin tetap tercatat.');
+                                }, 5, 3000);
+                            }
                         }
                     } catch (error) {
                         console.error('Error in !izin command:', error);
-                        await handleReconnect();
+                        if (error.message.includes('Session closed') || error.message.includes('Target closed')) {
+                            await handleReconnect();
+                        }
                     }
                     return;
                 }
@@ -785,7 +829,9 @@ client.on('message', async msg => {
         }
     } catch (error) {
         console.error('Critical error in message handler:', error);
-        await handleReconnect();
+        if (error.message.includes('Session closed') || error.message.includes('Target closed')) {
+            await handleReconnect();
+        }
     }
 });
 
@@ -863,7 +909,7 @@ async function initializeClient() {
 // Add reconnection handler
 async function handleReconnect() {
     const MAX_RECONNECT_ATTEMPTS = 5;
-    const RECONNECT_INTERVAL = 60000; // 1 minute
+    const RECONNECT_INTERVAL = 30000; // Reduced to 30 seconds
 
     if (!botState.reconnectAttempts) {
         botState.reconnectAttempts = 0;
@@ -878,6 +924,12 @@ async function handleReconnect() {
     console.log(`Attempting to reconnect (attempt ${botState.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
 
     try {
+        if (client.pupPage) {
+            await client.pupPage.close().catch(() => {});
+        }
+        if (client.pupBrowser) {
+            await client.pupBrowser.close().catch(() => {});
+        }
         await client.destroy();
         console.log('Previous client instance destroyed');
     } catch (error) {
@@ -891,6 +943,7 @@ async function handleReconnect() {
         await initializeClient();
         if (botState.isAuthenticated) {
             botState.reconnectAttempts = 0; // Reset counter on successful reconnection
+            console.log('Reconnection successful, session restored');
         }
     } catch (error) {
         console.error('Reconnection attempt failed:', error);
